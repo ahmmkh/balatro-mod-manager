@@ -4,6 +4,8 @@ use std::fs;
 use std::time::Duration;
 use sysinfo::System;
 
+/// Keep the newest part of the log so the base64 payload stays well under the backend's 1 MB cap.
+const MAX_LOG_BYTES: usize = 400_000;
 const REPORT_TIMEOUT: Duration = Duration::from_secs(30);
 const REPORT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -43,7 +45,7 @@ pub async fn submit_report(
     // Get latest log
     let (log_filename, log_text) =
         latest_log().unwrap_or_else(|| ("bmm.log".to_string(), String::from("No logs found.")));
-    let log_b64 = STANDARD.encode(log_text.as_bytes());
+    let log_b64 = STANDARD.encode(tail_str(&log_text, MAX_LOG_BYTES).as_bytes());
 
     let payload = ReportPayload {
         title: &title,
@@ -107,6 +109,18 @@ pub async fn submit_report(
     }
     log::info!("Issue report submitted successfully");
     Ok(())
+}
+
+/// Last `max` bytes of `text`, cut on a char boundary.
+fn tail_str(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut start = text.len() - max;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    &text[start..]
 }
 
 /// Returns the latest log's filename and text, if any.
@@ -456,6 +470,15 @@ mod tests {
         if std::env::var("BMI_SERVER_URL").is_err() {
             assert_eq!(url.scheme(), "https");
         }
+    }
+
+    #[test]
+    fn test_tail_str_keeps_newest_and_respects_char_boundaries() {
+        assert_eq!(tail_str("hello", 10), "hello");
+        assert_eq!(tail_str("hello world", 5), "world");
+        // "é" is 2 bytes; a cut in the middle must advance to the next boundary.
+        assert_eq!(tail_str("aéb", 2), "b");
+        assert!(STANDARD.encode(tail_str(&"x".repeat(2_000_000), MAX_LOG_BYTES)).len() < 1_000_000);
     }
 
     #[test]

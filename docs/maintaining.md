@@ -48,6 +48,18 @@ missing, the app sends nothing. The existing in-app opt-out toggle still applies
 bunx wrangler d1 execute bmi --remote --command "SELECT id, created_at, title, mm_version, os FROM reports ORDER BY id DESC LIMIT 20"
 ```
 
+## Before cutting a release
+
+- Set the real `DEFAULT_BMI_SERVER_URL`. The shipped placeholder (`bmi-api.invalid`) deliberately fails closed.
+- `.github/workflows/*` release jobs have not been reviewed for the fork: they must export `BMM_UMAMI_URL` /
+  `BMM_UMAMI_WEBSITE_ID` (as secrets) or telemetry is silently off, and signing/notarization secrets are needed
+  for macOS builds. The README and install scripts point at `ahmmkh/balatro-mod-manager` releases, which
+  don't exist until you publish one.
+- Prefer a custom domain over `*.workers.dev` for the Worker: it keeps the URL independent of your Cloudflare
+  account name inside shipped binaries.
+- Not yet verified: launching the app itself (`BMI_SERVER_URL=http://localhost:8787 bun run tauri dev`) and
+  installing a mod through the UI. Only the Rust client <-> Worker round trip is tested.
+
 ## Known gaps
 
 - Download counts start at zero (the old totals went offline with the old server) and are cached for up to

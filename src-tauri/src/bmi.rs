@@ -11,7 +11,9 @@ use crate::models::{ModDownloads, ModMeta};
 /// Base URL of the BMI API (the Cloudflare Worker in the `Balatro-Mod-Index` repo's `worker/`).
 /// Override at runtime with the `BMI_SERVER_URL` environment variable (e.g. for local development
 /// against `wrangler dev`).
-pub const DEFAULT_BMI_SERVER_URL: &str = "https://bmi-api.CHANGE-ME.workers.dev";
+/// `.invalid` can never resolve (RFC 2606), so an unconfigured build fails closed instead of
+/// trusting whoever might later register a placeholder hostname. Replace after deploying the Worker.
+pub const DEFAULT_BMI_SERVER_URL: &str = "https://bmi-api.invalid";
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RETRIES: u32 = 3;
