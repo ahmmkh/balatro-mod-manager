@@ -8,7 +8,8 @@ use crate::models::{ModDownloads, ModMeta};
 use bmm_lib::errors::AppError;
 use serde::{Deserialize, Serialize};
 
-const BMI_CACHE_FILE: &str = "bmi_mods_cache";
+// v2: new backend; old caches hold thumbnail URLs and a `since` cursor from the retired server.
+const BMI_CACHE_FILE: &str = "bmi_mods_cache_v2";
 const THUMB_CACHE_TTL_SECS: u64 = 60 * 60 * 24 * 7;
 const MOD_DETAILS_CACHE_TTL_SECS: u64 = 60 * 60 * 48; // 48 hours
 
@@ -992,7 +993,7 @@ mod tests {
         assert!(
             cache_file
                 .to_string_lossy()
-                .contains("bmi_mods_cache_default.json")
+                .contains("bmi_mods_cache_v2_default.json")
         );
     }
 
@@ -1004,7 +1005,7 @@ mod tests {
         assert!(
             cache_file
                 .to_string_lossy()
-                .contains("bmi_mods_cache_name_asc.json")
+                .contains("bmi_mods_cache_v2_name_asc.json")
         );
     }
 
@@ -1028,7 +1029,7 @@ mod tests {
         assert!(
             cache_file
                 .to_string_lossy()
-                .contains("bmi_mods_cache_.json")
+                .contains("bmi_mods_cache_v2_.json")
         );
     }
 
