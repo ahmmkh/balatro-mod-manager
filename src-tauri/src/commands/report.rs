@@ -4,7 +4,6 @@ use std::fs;
 use std::time::Duration;
 use sysinfo::System;
 
-const REPORT_URL: &str = "https://balatro-mod-manager-reports.dasguney.com/report";
 const REPORT_TIMEOUT: Duration = Duration::from_secs(30);
 const REPORT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -22,7 +21,7 @@ struct ReportPayload<'a> {
     log_filename: String,
 }
 
-/// Submit an issue report to the Jimbo bot server.
+/// Submit an issue report to the BMI backend (`POST {BMI_SERVER_URL}/report`).
 #[tauri::command]
 pub async fn submit_report(
     title: String,
@@ -70,8 +69,11 @@ pub async fn submit_report(
         })?;
 
     log::info!("Submitting issue report: {}", title);
+    let report_url = crate::bmi::bmi_server_url()?
+        .join("report")
+        .map_err(|e| format!("Invalid report URL: {e}"))?;
     let resp = client
-        .post(REPORT_URL)
+        .post(report_url)
         .json(&payload)
         .send()
         .await
@@ -448,7 +450,12 @@ mod tests {
 
     #[test]
     fn test_report_url_is_https() {
-        assert!(REPORT_URL.starts_with("https://"));
+        let url = crate::bmi::bmi_server_url().unwrap().join("report").unwrap();
+        assert_eq!(url.path(), "/report");
+        // BMI_SERVER_URL may legitimately be http://localhost during development.
+        if std::env::var("BMI_SERVER_URL").is_err() {
+            assert_eq!(url.scheme(), "https");
+        }
     }
 
     #[test]

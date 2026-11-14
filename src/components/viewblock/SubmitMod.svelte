@@ -3,8 +3,9 @@
   import Github from "../GithubIcon.svelte";
   import { openExternal } from "$lib/opener";
 
-  const HELPER_URL = "https://bmi-helper.dasguney.com/";
-  const INDEX_REPO_URL = "https://github.com/skyline69/Balatro-Mod-Index";
+  const INDEX_REPO_URL = "https://github.com/ahmmkh/Balatro-Mod-Index";
+  // The hosted submission helper is gone; submissions are PRs following the index README.
+  const HELPER_URL = `${INDEX_REPO_URL}/blob/main/README.md#want-to-upload-a-new-mod`;
   const README_URL = `${INDEX_REPO_URL}/blob/main/README.md`;
 
   const open = async (url: string) => {

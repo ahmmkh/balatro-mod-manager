@@ -21,7 +21,7 @@ describe("SubmitMod view", () => {
     await fireEvent.click(button);
 
     expect(openExternal).toHaveBeenCalledWith(
-      "https://bmi-helper.dasguney.com/",
+      "https://github.com/ahmmkh/Balatro-Mod-Index/blob/main/README.md#want-to-upload-a-new-mod",
     );
   });
 
@@ -34,7 +34,7 @@ describe("SubmitMod view", () => {
     await fireEvent.click(button);
 
     expect(openExternal).toHaveBeenCalledWith(
-      "https://github.com/skyline69/Balatro-Mod-Index",
+      "https://github.com/ahmmkh/Balatro-Mod-Index",
     );
   });
 });
