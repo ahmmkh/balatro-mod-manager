@@ -75,7 +75,9 @@ pub fn open_reports(path: &Path) -> rusqlite::Result<Connection> {
 /// Persistent random secret used to salt visitor hashes; created on first run.
 pub fn secret(conn: &Connection) -> rusqlite::Result<String> {
     let existing: Option<String> = conn
-        .query_row("SELECT value FROM meta WHERE key = 'salt'", [], |r| r.get(0))
+        .query_row("SELECT value FROM meta WHERE key = 'salt'", [], |r| {
+            r.get(0)
+        })
         .map(Some)
         .or_else(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => Ok(None),
@@ -86,7 +88,10 @@ pub fn secret(conn: &Connection) -> rusqlite::Result<String> {
     }
     let bytes: [u8; 32] = rand::random();
     let value: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    conn.execute("INSERT INTO meta (key, value) VALUES ('salt', ?1)", [&value])?;
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('salt', ?1)",
+        [&value],
+    )?;
     Ok(value)
 }
 

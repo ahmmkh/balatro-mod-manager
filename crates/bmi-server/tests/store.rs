@@ -26,12 +26,18 @@ fn catalog(mods: &[CatalogMod]) -> (tempfile::TempDir, PathBuf) {
 
 fn store() -> (Store, Db, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let db: Db = Arc::new(Mutex::new(db::open(&dir.path().join("bmi.sqlite")).unwrap()));
+    let db: Db = Arc::new(Mutex::new(
+        db::open(&dir.path().join("bmi.sqlite")).unwrap(),
+    ));
     (Store::new(db.clone()), db, dir)
 }
 
 fn abc() -> [CatalogMod; 3] {
-    [m("a@Alpha", "Alpha", 10), m("b@Beta", "Beta", 10), m("c@Gamma", "Gamma", 10)]
+    [
+        m("a@Alpha", "Alpha", 10),
+        m("b@Beta", "Beta", 10),
+        m("c@Gamma", "Gamma", 10),
+    ]
 }
 
 #[test]
@@ -54,7 +60,11 @@ fn removed_mod_gets_tombstone_and_can_return() {
     assert_eq!(stats.removed, 1);
     assert_eq!(
         s.tombstones_since("1500"),
-        vec![Tombstone { id: "b@Beta".into(), deleted: true, updated_at: "2000".into() }]
+        vec![Tombstone {
+            id: "b@Beta".into(),
+            deleted: true,
+            updated_at: "2000".into()
+        }]
     );
     assert_eq!(s.mods().len(), 2);
     assert!(s.get("b@Beta").is_none());
@@ -74,7 +84,10 @@ fn first_seen_mods_are_changed_now() {
     let (_k2, p2) = catalog(&[abc()[0].clone(), m("n@New", "New", 5)]);
     s.load(&p2, 5000).unwrap();
     let changed = bmi_server::catalog::changed_since(&s.mods(), "4000");
-    assert_eq!(changed.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["n@New"]);
+    assert_eq!(
+        changed.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        ["n@New"]
+    );
 }
 
 #[test]
@@ -106,15 +119,22 @@ fn schemas_are_separate() {
     let d = tempfile::tempdir().unwrap();
     let main = db::open(&d.path().join("bmi.sqlite")).unwrap();
     let tables = |c: &rusqlite::Connection| -> Vec<String> {
-        let mut st = c.prepare("SELECT name FROM sqlite_master WHERE type='table'").unwrap();
-        st.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+        let mut st = c
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .unwrap();
+        st.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
     };
     assert!(!tables(&main).contains(&"reports".to_string()));
     assert!(tables(&main).contains(&"mod_state".to_string()));
 
     let rep = db::open_reports(&d.path().join("reports.sqlite")).unwrap();
     assert!(tables(&rep).contains(&"reports".to_string()));
-    let av: i64 = rep.query_row("PRAGMA auto_vacuum", [], |r| r.get(0)).unwrap();
+    let av: i64 = rep
+        .query_row("PRAGMA auto_vacuum", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(av, 2);
 }
 
