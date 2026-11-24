@@ -29,6 +29,8 @@ spec:
             - {name: PORT, value: "8080"}
             - {name: DATA_DIR, value: /data}
             - {name: TRUST_PROXY, value: "1"}
+            - {name: INDEX_REPO_URL, value: "https://github.com/ahmmkh/Balatro-Mod-Index.git"}
+            - {name: INDEX_BRANCH, value: "feat/vps-server"}   # switch to main once the index PR is merged
             - {name: REPORTS_PER_DAY, value: "300"}
             - {name: REPORTS_MAX_BYTES, value: "1073741824"}
             - name: ADMIN_TOKEN

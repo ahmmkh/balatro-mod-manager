@@ -157,7 +157,7 @@ impl PathEnv {
             .map(PathBuf::from);
         PathEnv {
             os: Os::current(),
-            home: home::home_dir(),
+            home: dirs::home_dir(),
             custom_path,
             steam_install: registry_steam_install(),
             flatpak: std::env::var("FLATPAK_ID").is_ok(),

@@ -61,6 +61,7 @@ impl FixtureServer {
 struct Sandbox {
     _tmp: tempfile::TempDir,
     root: PathBuf,
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
     _guard: std::sync::MutexGuard<'static, ()>,
 }
 
@@ -69,11 +70,24 @@ impl Sandbox {
         let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
+        // The Linux mods-dir resolution also looks at Steam/Proton folders under $HOME, which exist
+        // on CI runners and developer machines. Point everything at the sandbox.
+        let saved: Vec<(&'static str, Option<std::ffi::OsString>)> =
+            ["HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"]
+                .into_iter()
+                .map(|k| (k, std::env::var_os(k)))
+                .collect();
         // SAFETY: tests in this file are serialised by ENV_LOCK.
-        unsafe { std::env::set_var("BMM_CONFIG_DIR", &root) };
+        unsafe {
+            std::env::set_var("BMM_CONFIG_DIR", &root);
+            std::env::set_var("HOME", &root);
+            std::env::set_var("XDG_DATA_HOME", root.join("xdg-data"));
+            std::env::set_var("XDG_CONFIG_HOME", root.join("xdg-config"));
+        }
         Sandbox {
             _tmp: tmp,
             root,
+            saved,
             _guard: guard,
         }
     }
@@ -84,7 +98,15 @@ impl Sandbox {
 
 impl Drop for Sandbox {
     fn drop(&mut self) {
-        unsafe { std::env::remove_var("BMM_CONFIG_DIR") };
+        unsafe {
+            std::env::remove_var("BMM_CONFIG_DIR");
+            for (k, v) in &self.saved {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
     }
 }
 
