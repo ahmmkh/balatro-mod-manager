@@ -30,4 +30,5 @@ assert not snap.execute("select 1 from sqlite_master where name='reports'").fetc
 print("ok snapshot matches live mod_state and has no reports table")
 PY
 SIZE=$(docker image inspect "$IMG" --format '{{.Size}}'); echo "image size: $((SIZE/1000000)) MB"
-[ "$SIZE" -lt 250000000 ] && echo "ok under 250 MB"
+# git + python3 + Pillow (needed for in-cluster catalog sync) put the image near 340 MB.
+if [ "$SIZE" -lt 400000000 ]; then echo "ok under 400 MB"; else echo "FAIL image too large"; exit 1; fi
