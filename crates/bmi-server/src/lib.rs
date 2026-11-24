@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod downloads;
 pub mod links;
+pub mod maintenance;
 pub mod ratelimit;
 pub mod routes_admin;
 pub mod routes_public;
