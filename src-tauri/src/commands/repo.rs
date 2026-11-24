@@ -266,7 +266,7 @@ pub async fn fetch_repo_downloads(
 }
 
 fn bmi_cache_paths(sort: Option<&str>) -> Result<(PathBuf, PathBuf), String> {
-    let config_dir = dirs::config_dir()
+    let config_dir = bmm_lib::config_root()
         .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")).to_string())?;
     let cache_dir = config_dir.join("Balatro").join("mod_index_cache");
     let suffix = sort

@@ -223,7 +223,7 @@ pub async fn get_latest_log() -> Result<(String, String), String> {
 
 #[tauri::command]
 pub async fn get_logs_folder() -> Result<String, String> {
-    let dir = dirs::config_dir()
+    let dir = bmm_lib::config_root()
         .ok_or_else(|| "config directory not found".to_string())?
         .join("Balatro")
         .join("logs");
@@ -232,7 +232,7 @@ pub async fn get_logs_folder() -> Result<String, String> {
 }
 
 fn latest_log() -> Option<(String, String)> {
-    let dir = dirs::config_dir()?.join("Balatro").join("logs");
+    let dir = bmm_lib::config_root()?.join("Balatro").join("logs");
     let entries = fs::read_dir(&dir).ok()?;
     let mut files: Vec<_> = entries
         .filter_map(|e| e.ok())

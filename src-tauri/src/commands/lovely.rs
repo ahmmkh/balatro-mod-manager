@@ -14,7 +14,7 @@ use crate::state::AppState;
 pub async fn is_lovely_installed(_state: tauri::State<'_, AppState>) -> Result<bool, String> {
     #[cfg(target_os = "macos")]
     {
-        let config_dir = dirs::config_dir()
+        let config_dir = bmm_lib::config_root()
             .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")).to_string())?;
         let lovely_path = config_dir
             .join("Balatro")

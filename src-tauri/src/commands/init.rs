@@ -127,7 +127,7 @@ fn check_lovely_installed_inner(
     #[cfg(target_os = "macos")]
     {
         let _ = (db, existing_installation);
-        let config_dir = dirs::config_dir()
+        let config_dir = bmm_lib::config_root()
             .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")).to_string())?;
         let lovely_path = config_dir
             .join("Balatro")
@@ -164,10 +164,10 @@ fn check_lovely_installed_inner(
         use log::{debug, info};
 
         // Also check the cached locations (survive Steam file verification)
-        let cached_dll = dirs::config_dir()
+        let cached_dll = bmm_lib::config_root()
             .map(|c| c.join("Balatro/bins/version.dll"))
             .filter(|p| lovely::injector_artifact_exists(p));
-        let cached_so = dirs::config_dir()
+        let cached_so = bmm_lib::config_root()
             .map(|c| c.join("Balatro/bins/liblovely.so"))
             .filter(|p| lovely::injector_artifact_exists(p));
 

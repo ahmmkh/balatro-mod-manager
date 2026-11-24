@@ -70,7 +70,7 @@ impl Database {
     /// Returns an error if the config directory cannot be found, the database
     /// cannot be opened, or migrations fail.
     pub fn new() -> Result<Self, AppError> {
-        let config_dir = dirs::config_dir()
+        let config_dir = crate::config_root()
             .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")))?;
         let balatro_dir = config_dir.join("Balatro");
         let storage_path = resolve_storage_path(&balatro_dir);

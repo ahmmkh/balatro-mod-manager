@@ -96,7 +96,7 @@ pub async fn clear_cache() -> Result<(), String> {
     }
 
     // Also clear the repo mod index cache we maintain under the config directory
-    let config_dir = match dirs::config_dir() {
+    let config_dir = match bmm_lib::config_root() {
         Some(p) => p,
         None => {
             // If we can't resolve config dir, return any prior error or success for the primary cache

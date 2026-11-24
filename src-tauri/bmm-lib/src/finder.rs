@@ -658,7 +658,7 @@ mod tests {
         // Ensure HOME points at temp so path resolution doesn't touch real user dirs.
         set_var("HOME", tmp.path());
 
-        let mods_root = dirs::config_dir().unwrap().join("Balatro").join("Mods");
+        let mods_root = crate::config_root().unwrap().join("Balatro").join("Mods");
         std::fs::create_dir_all(&mods_root).unwrap();
 
         // Create sample mod directories

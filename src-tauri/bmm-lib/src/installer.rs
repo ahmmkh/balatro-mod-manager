@@ -350,6 +350,105 @@ fn sanitize_mod_name(name: &str) -> String {
     out.trim_end_matches([' ', '.']).to_string()
 }
 
+/// Longest full target path (mods dir + mod folder + entry) accepted on any OS. Windows breaks
+/// near 260 characters, so this leaves headroom and keeps behaviour identical everywhere.
+const MAX_TARGET_PATH_CHARS: usize = 240;
+
+const WINDOWS_RESERVED_NAMES: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+fn unsafe_entry(name: &str, reason: &str) -> AppError {
+    AppError::PathValidation {
+        path: PathBuf::from(name),
+        reason: format!("unsafe archive entry: {reason}"),
+    }
+}
+
+/// Reject archive entry names that would escape the mod folder or cannot be created on every
+/// supported OS. The same rules apply on Windows, macOS and Linux, so a mod never installs on one
+/// and silently breaks on another.
+pub(crate) fn validate_entry_name(name: &str) -> Result<(), AppError> {
+    let n = name.replace('\\', "/");
+    if n.starts_with('/') {
+        return Err(unsafe_entry(name, "absolute path"));
+    }
+    let b = n.as_bytes();
+    if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+        return Err(unsafe_entry(name, "drive letter"));
+    }
+    for comp in n.split('/') {
+        if comp.is_empty() || comp == "." {
+            continue;
+        }
+        if comp == ".." {
+            return Err(unsafe_entry(name, "parent directory reference"));
+        }
+        if comp
+            .chars()
+            .any(|c| c.is_control() || "<>:\"|?*".contains(c))
+        {
+            return Err(unsafe_entry(
+                name,
+                "character not allowed in Windows file names",
+            ));
+        }
+        if comp.ends_with('.') || comp.ends_with(' ') {
+            return Err(unsafe_entry(name, "name ends with a dot or space"));
+        }
+        let stem = comp.split('.').next().unwrap_or("").to_ascii_uppercase();
+        if WINDOWS_RESERVED_NAMES.contains(&stem.as_str()) {
+            return Err(unsafe_entry(name, "reserved Windows device name"));
+        }
+    }
+    Ok(())
+}
+
+/// Validate every entry of an archive before anything is written: per-entry rules, names that
+/// differ only by case (they would merge on Windows/macOS), and over-long target paths.
+/// `base` is the folder the mod will be installed into.
+pub(crate) fn validate_archive_entries<'a>(
+    entries: impl IntoIterator<Item = &'a str>,
+    base: &Path,
+) -> Result<(), AppError> {
+    let base_len = base.to_string_lossy().chars().count();
+    // lowercase path prefix -> the spelling first seen
+    let mut spellings: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for name in entries {
+        if name.starts_with("__MACOSX/") || name.starts_with("__MACOSX\\") {
+            continue; // skipped at extraction time as well
+        }
+        validate_entry_name(name)?;
+        let n = name.replace('\\', "/");
+        let trimmed = n.trim_start_matches("./").trim_end_matches('/');
+        if base_len + 1 + trimmed.chars().count() > MAX_TARGET_PATH_CHARS {
+            return Err(unsafe_entry(name, "path too long"));
+        }
+        let mut prefix = String::new();
+        for comp in trimmed.split('/').filter(|c| !c.is_empty() && *c != ".") {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(comp);
+            let key = prefix.to_lowercase();
+            match spellings.get(&key) {
+                Some(seen) if seen != &prefix => {
+                    return Err(unsafe_entry(
+                        name,
+                        "differs only by letter case from another entry",
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    spellings.insert(key, prefix.clone());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Sanitize an archive entry path to prevent path traversal attacks.
 /// Removes `.` and `..` components and ensures the path is relative.
 fn sanitize_archive_path(entry_name: &str) -> Option<PathBuf> {
@@ -494,12 +593,14 @@ fn handle_zip(archive_path: &Path, mod_dir: &Path, mod_name: &str) -> Result<Pat
     // entry there would discard every sibling but the first (see #363).
     let mut has_root_files = false;
     let mut top_level: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut entry_names: Vec<String> = Vec::with_capacity(zip.len());
     for i in 0..zip.len() {
         let file = zip.by_index(i).map_err(|e| AppError::FileRead {
             path: mod_dir.to_path_buf(),
             source: format!("Zip entry error: {e}"),
         })?;
         let name = file.name();
+        entry_names.push(name.to_string());
         if name.starts_with("__MACOSX/") || name.starts_with("__MACOSX\\") {
             continue;
         }
@@ -523,6 +624,9 @@ fn handle_zip(archive_path: &Path, mod_dir: &Path, mod_name: &str) -> Result<Pat
 
     // The target directory where the mod will be installed
     let target_dir = mod_dir.join(mod_name);
+
+    // Reject the whole archive before touching the disk if any entry is unsafe on any OS.
+    validate_archive_entries(entry_names.iter().map(String::as_str), &target_dir)?;
 
     // Remove target directory if it exists (with retry logic)
     if target_dir.exists() {
@@ -735,8 +839,12 @@ fn handle_tar(archive_path: &Path, mod_dir: &Path, mod_name: &str) -> Result<Pat
         path: archive_path.to_path_buf(),
         source: e.to_string(),
     })?;
-    let reader = BufReader::new(file);
-    let mut tar = Archive::new(reader);
+    validate_tar_entries(Archive::new(BufReader::new(file)), mod_dir, mod_name)?;
+    let file = File::open(archive_path).map_err(|e| AppError::FileRead {
+        path: archive_path.to_path_buf(),
+        source: e.to_string(),
+    })?;
+    let mut tar = Archive::new(BufReader::new(file));
     extract_tar_to_staging(&mut tar, mod_dir, mod_name)
 }
 
@@ -745,10 +853,46 @@ fn handle_tar_gz(archive_path: &Path, mod_dir: &Path, mod_name: &str) -> Result<
         path: archive_path.to_path_buf(),
         source: e.to_string(),
     })?;
-    let reader = BufReader::new(file);
-    let gz = GzDecoder::new(reader);
-    let mut tar = Archive::new(gz);
+    validate_tar_entries(
+        Archive::new(GzDecoder::new(BufReader::new(file))),
+        mod_dir,
+        mod_name,
+    )?;
+    let file = File::open(archive_path).map_err(|e| AppError::FileRead {
+        path: archive_path.to_path_buf(),
+        source: e.to_string(),
+    })?;
+    let mut tar = Archive::new(GzDecoder::new(BufReader::new(file)));
     extract_tar_to_staging(&mut tar, mod_dir, mod_name)
+}
+
+/// First pass over a tar archive: apply the same entry rules as zip before anything is written.
+fn validate_tar_entries<R: Read>(
+    mut tar: Archive<R>,
+    mod_dir: &Path,
+    mod_name: &str,
+) -> Result<(), AppError> {
+    let mut names: Vec<String> = Vec::new();
+    for entry in tar.entries().map_err(|e| AppError::FileRead {
+        path: mod_dir.to_path_buf(),
+        source: format!("Tar entry error: {e}"),
+    })? {
+        let entry = entry.map_err(|e| AppError::FileRead {
+            path: mod_dir.to_path_buf(),
+            source: format!("Tar entry error: {e}"),
+        })?;
+        let path = entry.path().map_err(|e| AppError::FileRead {
+            path: mod_dir.to_path_buf(),
+            source: format!("Invalid path in tar: {e}"),
+        })?;
+        names.push(path.to_string_lossy().to_string());
+        if names.len() > MAX_ARCHIVE_FILES {
+            return Err(AppError::ArchiveTooLarge {
+                reason: format!("Archive contains more than {} files", MAX_ARCHIVE_FILES),
+            });
+        }
+    }
+    validate_archive_entries(names.iter().map(String::as_str), &mod_dir.join(mod_name))
 }
 
 /// Extract tar archive using staging directory for atomic installation.
