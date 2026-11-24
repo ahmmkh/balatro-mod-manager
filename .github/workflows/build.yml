@@ -38,6 +38,7 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
+            xvfb \
             pkg-config
 
           # quick sanity checks (optional)
@@ -84,6 +85,30 @@ jobs:
           MACOS_TARGETS_OPTIMIZED: true
         with:
           args: ${{ matrix.args }}
+      # Start the packaged binary headlessly: proves it launches, creates its config directories,
+      # initialises logging and builds the backend client. See `smoke_test` in src-tauri/src/lib.rs.
+      - name: Smoke test the built app
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          RUN=""
+          case "$PLATFORM" in
+            macos-latest) BIN="target/universal-apple-darwin/release/bundle/macos/Balatro Mod Manager.app/Contents/MacOS/BMM" ;;
+            ubuntu-22.04) BIN="target/release/BMM"; RUN="xvfb-run -a" ;;
+            windows-latest) BIN="target/release/BMM.exe" ;;
+          esac
+          export BMM_CONFIG_DIR="$RUNNER_TEMP/bmm"
+          mkdir -p "$BMM_CONFIG_DIR"
+          # shellcheck disable=SC2086
+          $RUN "$BIN" --smoke-test > "$RUNNER_TEMP/smoke.out" 2> "$RUNNER_TEMP/smoke.err" || {
+            echo "smoke test exited non-zero" >&2; cat "$RUNNER_TEMP/smoke.err" >&2; exit 1; }
+          # A Windows GUI-subsystem exe may have no stdout; it also writes the result to a file.
+          if grep -q BMM_SMOKE_OK "$RUNNER_TEMP/smoke.out" || grep -q BMM_SMOKE_OK "$BMM_CONFIG_DIR/Balatro/smoke_result.txt"; then
+            echo "smoke test passed"
+          else
+            echo "BMM_SMOKE_OK not found" >&2; exit 1
+          fi
       # Upload artifacts by platform
       - name: Upload macOS artifacts
         if: matrix.platform == 'macos-latest'

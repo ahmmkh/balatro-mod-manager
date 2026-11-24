@@ -223,7 +223,7 @@ mod tests {
         let db = Database::new().expect("db");
 
         // Create one existing and one missing mod path
-        let mods_dir = dirs::config_dir().unwrap().join("Balatro").join("Mods");
+        let mods_dir = bmm_lib::config_root().unwrap().join("Balatro").join("Mods");
         std::fs::create_dir_all(&mods_dir).unwrap();
         let existing = mods_dir.join("Exists");
         std::fs::create_dir_all(&existing).unwrap();
@@ -264,7 +264,7 @@ pub async fn delete_manual_mod(path: String) -> Result<(), String> {
         ));
     }
     let config_dir =
-        dirs::config_dir().ok_or_else(|| "Could not find config directory".to_string())?;
+        bmm_lib::config_root().ok_or_else(|| "Could not find config directory".to_string())?;
     let mods_dir = config_dir.join("Balatro").join("Mods");
 
     let canonicalized_path = tokio::fs::canonicalize(&path)

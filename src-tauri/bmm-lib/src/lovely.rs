@@ -50,7 +50,7 @@ const VERSION_CACHE_TTL_SECS: u64 = 60 * 60 * 24; // 24 hours
 
 /// Get the path to the Lovely version cache file
 fn get_version_cache_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("Balatro").join("lovely_version_cache.json"))
+    crate::config_root().map(|d| d.join("Balatro").join("lovely_version_cache.json"))
 }
 
 /// Load Lovely version from disk cache if still fresh
@@ -111,7 +111,7 @@ pub async fn ensure_version_dll_exists(game_path: &Path) -> Result<PathBuf, AppE
         restore_disabled_injector_file(&dll_path)?;
 
         // On Linux, cache the DLL and copy on each launch to survive Steam file verification
-        let config_dir = dirs::config_dir()
+        let config_dir = crate::config_root()
             .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")))?;
         let bins_dir = config_dir.join("Balatro/bins");
         fs::create_dir_all(&bins_dir).map_err(|e| AppError::DirCreate {
@@ -214,7 +214,7 @@ fn detect_architecture() -> Result<&'static str, AppError> {
 pub async fn ensure_lovely_exists() -> Result<PathBuf, AppError> {
     #[cfg(target_os = "macos")]
     {
-        let config_dir = dirs::config_dir()
+        let config_dir = crate::config_root()
             .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")))?;
 
         let bins_dir = config_dir.join("Balatro/bins");
@@ -271,7 +271,7 @@ pub async fn ensure_lovely_exists() -> Result<PathBuf, AppError> {
 
 #[cfg(target_os = "linux")]
 pub async fn ensure_love_binary() -> Result<(PathBuf, Option<PathBuf>), AppError> {
-    let config_dir = dirs::config_dir()
+    let config_dir = crate::config_root()
         .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")))?;
     let bins_dir = config_dir.join("Balatro/bins");
     fs::create_dir_all(&bins_dir).map_err(|e| AppError::DirCreate {
@@ -319,7 +319,7 @@ pub async fn ensure_love_binary() -> Result<(PathBuf, Option<PathBuf>), AppError
 
 #[cfg(target_os = "linux")]
 pub async fn ensure_lovely_so_exists(game_path: &Path) -> Result<PathBuf, AppError> {
-    let config_dir = dirs::config_dir()
+    let config_dir = crate::config_root()
         .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")))?;
     let bins_dir = config_dir.join("Balatro/bins");
     fs::create_dir_all(&bins_dir).map_err(|e| AppError::DirCreate {
@@ -540,7 +540,7 @@ pub async fn get_latest_lovely_version() -> Result<String, AppError> {
 pub async fn remove_installed_lovely() -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     {
-        let config_dir = dirs::config_dir()
+        let config_dir = crate::config_root()
             .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")))?;
         let bins_dir = config_dir.join("Balatro/bins");
         let lovely_path = bins_dir.join("liblovely.dylib");
@@ -608,7 +608,7 @@ pub async fn remove_installed_lovely() -> Result<(), AppError> {
         // Also remove cached copies on Linux
         #[cfg(target_os = "linux")]
         {
-            if let Some(config_dir) = dirs::config_dir() {
+            if let Some(config_dir) = crate::config_root() {
                 let bins_dir = config_dir.join("Balatro/bins");
                 let cached_dll = bins_dir.join("version.dll");
                 let cached_so = bins_dir.join("liblovely.so");
@@ -689,7 +689,7 @@ fn restore_disabled_injector_file(active_path: &Path) -> Result<bool, AppError> 
 pub fn set_injector_enabled(enabled: bool) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     {
-        let config_dir = dirs::config_dir()
+        let config_dir = crate::config_root()
             .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")))?;
         let bins_dir = config_dir.join("Balatro/bins");
         let active_path = bins_dir.join("liblovely.dylib");
@@ -718,7 +718,7 @@ pub fn set_injector_enabled(enabled: bool) -> Result<(), AppError> {
         // On Linux, also handle liblovely.so for native LOVE builds
         #[cfg(target_os = "linux")]
         {
-            if let Some(config_dir) = dirs::config_dir() {
+            if let Some(config_dir) = crate::config_root() {
                 let bins_dir = config_dir.join("Balatro/bins");
                 let so_active = bins_dir.join("liblovely.so");
                 let so_disabled = bins_dir.join("liblovely.so.disabled");
@@ -747,7 +747,7 @@ pub fn set_injector_enabled(enabled: bool) -> Result<(), AppError> {
 pub fn is_injector_enabled() -> Result<bool, AppError> {
     #[cfg(target_os = "macos")]
     {
-        let config_dir = dirs::config_dir()
+        let config_dir = crate::config_root()
             .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")))?;
         let bins_dir = config_dir.join("Balatro/bins");
         let active_path = bins_dir.join("liblovely.dylib");

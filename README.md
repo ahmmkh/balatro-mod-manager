@@ -1,30 +1,29 @@
 # [![Balatro Mod Manager](images/title.svg)](#)
 
-> [!WARNING]
-> **This project has been discontinued.** I no longer have the time to maintain it, so the servers behind Balatro Mod Manager are being shut down and this repository is archived. Features that rely on those servers will stop working.
->
-> Looking for an alternative? Try [r2modman](https://thunderstore.io/c/balatro/p/ebkr/r2modman/) or [imm](https://codeberg.org/balafrost/imm) (Balatro Mod Manager, but in-game).
->
-> The code stays open source under its license. If you want to continue the project, feel free to fork it. Thanks to everyone who used it and contributed!
+> [!NOTE]
+> **This is a maintained fork** of [skyline69/balatro-mod-manager](https://github.com/skyline69/balatro-mod-manager),
+> which was discontinued when its servers were shut down. This fork runs its own backend (mod catalog,
+> download counts, reports). See [docs/maintaining.md](docs/maintaining.md). Thanks to the original author and
+> contributors; the code remains GPL-3.0.
 
 The Balatro Mod Manager by _Skyline_.
 
 Balatro Mod Manager is a standalone tool made for [Balatro](https://store.steampowered.com/app/2379780/Balatro/) that makes finding, downloading, and installing mods easy.
 
 <p align="center">
-    <a href="https://star-history.com/#skyline69/balatro-mod-manager&Date">
+    <a href="https://star-history.com/#ahmmkh/balatro-mod-manager&Date">
         <picture>
-            <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=skyline69/balatro-mod-manager&type=Date&theme=dark" />
-            <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=skyline69/balatro-mod-manager&type=Date" />
-            <img width="75%" alt="Star History Chart" src="https://api.star-history.com/svg?repos=skyline69/balatro-mod-manager&type=Date" />
+            <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ahmmkh/balatro-mod-manager&type=Date&theme=dark" />
+            <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ahmmkh/balatro-mod-manager&type=Date" />
+            <img width="75%" alt="Star History Chart" src="https://api.star-history.com/svg?repos=ahmmkh/balatro-mod-manager&type=Date" />
         </picture>
     </a>
 </p>
 
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/skyline69/balatro-mod-manager/total)
-![GitHub License](https://img.shields.io/github/license/skyline69/balatro-mod-manager)
-![GitHub Tag](https://img.shields.io/github/v/tag/skyline69/balatro-mod-manager)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/skyline69/balatro-mod-manager/ci.yml)
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/ahmmkh/balatro-mod-manager/total)
+![GitHub License](https://img.shields.io/github/license/ahmmkh/balatro-mod-manager)
+![GitHub Tag](https://img.shields.io/github/v/tag/ahmmkh/balatro-mod-manager)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/ahmmkh/balatro-mod-manager/ci.yml)
 ![Website](https://img.shields.io/website?url=https%3A%2F%2Fbalatro-mod-manager.dasguney.com%2F)
 
 ![Rust](https://img.shields.io/badge/rust-%23000000.svg?logo=rust&logoColor=white)
@@ -33,13 +32,13 @@ Balatro Mod Manager is a standalone tool made for [Balatro](https://store.steamp
 ![Tauri](https://img.shields.io/badge/tauri-%2324C8DB.svg?logo=tauri&logoColor=%23FFFFFF)
 ![Svelte](https://img.shields.io/badge/svelte-%23f1413d.svg?logo=svelte&logoColor=white)
 
-# [![Download](images/download.svg)](https://github.com/skyline69/balatro-mod-manager/releases/latest)
+# [![Download](images/download.svg)](https://github.com/ahmmkh/balatro-mod-manager/releases/latest)
 
 Balatro Mod Manager is available for Windows, macOS, and Linux. The installer is standalone and does not require any external libraries.
 
 > Note: The Balatro Mod Manager is **NOT** compatible with the Xbox Gamepass version of Balatro
 
-[Download the Balatro Mod Manager installer here](https://github.com/skyline69/balatro-mod-manager/releases/latest).
+[Download the Balatro Mod Manager installer here](https://github.com/ahmmkh/balatro-mod-manager/releases/latest).
 
 Scroll down to find **▸Assets** and download the right version of the installer for your system.
 
@@ -82,7 +81,7 @@ paru -S balatro-mod-manager-bin
 
 ### Debian / Ubuntu
 
-Download the `.deb` from the [latest release](https://github.com/skyline69/balatro-mod-manager/releases/latest) and install:
+Download the `.deb` from the [latest release](https://github.com/ahmmkh/balatro-mod-manager/releases/latest) and install:
 
 ```bash
 sudo apt install ./Balatro.Mod.Manager_*_amd64.deb
@@ -94,7 +93,7 @@ sudo apt install ./Balatro.Mod.Manager_*_amd64.deb
 
 - Run from a local checkout:
   ```bash
-  git clone https://github.com/skyline69/balatro-mod-manager.git
+  git clone https://github.com/ahmmkh/balatro-mod-manager.git
   cd balatro-mod-manager
   ```
 - Install runtimes once (GNOME 50 + toolchain extensions):
@@ -117,7 +116,7 @@ sudo apt install ./Balatro.Mod.Manager_*_amd64.deb
 
 # [![Build](images/build.svg)](#build-prerequisites)
 
-Alternatively, if you would prefer to build Balatro Mod Manager yourself instead of downloading the [prebuilt installer](https://github.com/skyline69/balatro-mod-manager/releases/latest), Balatro Mod Manager can be compiled from source using the instructions below.
+Alternatively, if you would prefer to build Balatro Mod Manager yourself instead of downloading the [prebuilt installer](https://github.com/ahmmkh/balatro-mod-manager/releases/latest), Balatro Mod Manager can be compiled from source using the instructions below.
 
 ## Build Prerequisites
 
@@ -138,7 +137,7 @@ Alternatively, if you would prefer to build Balatro Mod Manager yourself instead
 open Powershell & run this command:
 
 ```powershell
-iwr https://raw.githubusercontent.com/skyline69/balatro-mod-manager/main/scripts/install.ps1 -useb | iex
+iwr https://raw.githubusercontent.com/ahmmkh/balatro-mod-manager/main/scripts/install.ps1 -useb | iex
 ```
 
 ### For macOS
@@ -146,7 +145,7 @@ iwr https://raw.githubusercontent.com/skyline69/balatro-mod-manager/main/scripts
 run this command:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/skyline69/balatro-mod-manager/main/scripts/install.sh | bash
+curl -sL https://raw.githubusercontent.com/ahmmkh/balatro-mod-manager/main/scripts/install.sh | bash
 ```
 
 ### For Linux (Flatpak)
@@ -160,7 +159,7 @@ From a local checkout (respects your current branch/changes):
 If you want to install from the latest GitHub main without cloning manually, pass `--clone`:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/skyline69/balatro-mod-manager/main/scripts/linux-install.sh | bash -s -- --clone
+curl -sL https://raw.githubusercontent.com/ahmmkh/balatro-mod-manager/main/scripts/linux-install.sh | bash -s -- --clone
 ```
 
 The script now prefers the latest GitHub Release Flatpak if available, and falls back to a local build if not.
@@ -178,7 +177,7 @@ On Linux the manager currently supports the Steam version of Balatro only.
 
 1. Clone the repository & install bun's dependencies:
    ```sh
-   git clone https://github.com/skyline69/balatro-mod-manager.git
+   git clone https://github.com/ahmmkh/balatro-mod-manager.git
    cd balatro-mod-manager && bun install --allow-scripts
    ```
 2. Run the task based on your OS

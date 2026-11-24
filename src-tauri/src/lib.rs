@@ -29,6 +29,32 @@ fn exit_application(app_handle: tauri::AppHandle) {
     app_handle.exit(0);
 }
 
+/// Headless startup check used by CI on the packaged app (`BMM --smoke-test`): honours
+/// `BMM_CONFIG_DIR`, initialises logging, creates the config directories and builds the backend
+/// client; when `BMI_SERVER_URL` is set it also calls the backend's health endpoint. No window
+/// or Tauri runtime is created. The result is also written to `Balatro/smoke_result.txt` because
+/// a Windows GUI-subsystem executable may have no console to print to.
+pub fn smoke_test() -> Result<String, String> {
+    bmm_lib::logging::init_logger().map_err(|e| format!("logging init failed: {e}"))?;
+    let root = bmm_lib::config_root().ok_or("config directory not found")?;
+    let _ = std::fs::remove_file(root.join("Balatro").join("smoke_result.txt"));
+    for sub in ["Balatro", "Balatro/Mods", "Balatro/logs"] {
+        std::fs::create_dir_all(root.join(sub)).map_err(|e| format!("cannot create {sub}: {e}"))?;
+    }
+    let client = bmi::BmiClient::new()?;
+    if std::env::var_os("BMI_SERVER_URL").is_some() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?;
+        rt.block_on(client.check_health())
+            .map_err(|e| format!("health check failed: {e}"))?;
+    }
+    let ok = format!("BMM_SMOKE_OK {}", env!("CARGO_PKG_VERSION"));
+    let _ = std::fs::write(root.join("Balatro").join("smoke_result.txt"), &ok);
+    Ok(ok)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let result = tauri::Builder::default()
@@ -128,7 +154,7 @@ pub fn run() {
                 }
 
                 // Remove legacy GitHub-based local clone directory if it exists
-                if let Some(cfg_dir) = dirs::config_dir() {
+                if let Some(cfg_dir) = bmm_lib::config_root() {
                     let legacy_repo = cfg_dir.join("Balatro").join("mod_index");
                     if legacy_repo.exists() {
                         match std::fs::remove_dir_all(&legacy_repo) {
@@ -146,7 +172,7 @@ pub fn run() {
                 }
 
                 // Ensure the Mods directory exists
-                if let Some(cfg_dir) = dirs::config_dir() {
+                if let Some(cfg_dir) = bmm_lib::config_root() {
                     let mods_dir = cfg_dir.join("Balatro").join("Mods");
                     if let Err(e) = std::fs::create_dir_all(&mods_dir) {
                         log::warn!(
@@ -238,7 +264,7 @@ pub fn run() {
 
                 // Lightweight fingerprint of Mods directory to detect additions/removals
                 fn mods_dir_fingerprint() -> Option<u64> {
-                    let config_dir = dirs::config_dir()?;
+                    let config_dir = bmm_lib::config_root()?;
                     let mods_dir = config_dir.join("Balatro").join("Mods");
                     if !mods_dir.exists() {
                         return Some(0);
@@ -348,7 +374,7 @@ pub fn run() {
                         local_mod_detection::clear_detection_cache();
 
                         // Clean up empty directories in Mods folder
-                        if let Some(config_dir) = dirs::config_dir() {
+                        if let Some(config_dir) = bmm_lib::config_root() {
                             let mods_dir = config_dir.join("Balatro").join("Mods");
                             if let Ok(entries) = std::fs::read_dir(&mods_dir) {
                                 for entry in entries.flatten() {
@@ -515,6 +541,7 @@ pub fn run() {
             commands::thumbnails::enqueue_thumbnails,
             commands::thumbnails::enqueue_thumbnail,
             commands::report::submit_report,
+            commands::report::preview_report,
             commands::report::get_latest_log,
             commands::report::get_logs_folder,
             commands::mods::is_mod_enabled,
@@ -635,4 +662,46 @@ fn is_dir_empty_recursive(path: &std::path::Path) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod smoke_tests {
+    use super::*;
+
+    /// One test on purpose: the logger can only be initialised once per process.
+    #[test]
+    fn smoke_test_reports_ok_and_health_failures() {
+        let tmp = tempfile::tempdir().unwrap();
+        // SAFETY: this is the only test that touches these variables, and it runs alone in this module.
+        unsafe {
+            std::env::set_var("BMM_CONFIG_DIR", tmp.path());
+            std::env::remove_var("BMI_SERVER_URL");
+        }
+        let ok = smoke_test().expect("smoke ok");
+        assert!(ok.starts_with("BMM_SMOKE_OK "), "{ok}");
+        let logs: Vec<_> = std::fs::read_dir(tmp.path().join("Balatro").join("logs"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            logs.iter()
+                .any(|n| n.starts_with("bmm_") && n.ends_with(".log")),
+            "{logs:?}"
+        );
+        assert!(
+            tmp.path()
+                .join("Balatro")
+                .join("smoke_result.txt")
+                .is_file()
+        );
+
+        unsafe { std::env::set_var("BMI_SERVER_URL", "http://127.0.0.1:9") };
+        let err = smoke_test().expect_err("nothing listens on port 9");
+        assert!(err.contains("health"), "{err}");
+        unsafe {
+            std::env::remove_var("BMI_SERVER_URL");
+            std::env::remove_var("BMM_CONFIG_DIR");
+        }
+    }
 }

@@ -6,7 +6,7 @@
 
   async function handleDownload() {
     try {
-      await openExternal("https://balatro-mod-manager.dasguney.com/download");
+      await openExternal("https://github.com/ahmmkh/balatro-mod-manager/releases/latest");
     } catch (e) {
       console.error("Failed to open download page:", e);
     }

@@ -1,0 +1,89 @@
+name: Contract - app client vs bmi-server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src-tauri/src/bmi.rs"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/contract.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src-tauri/src/bmi.rs"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/contract.yml"
+
+jobs:
+  contract:
+    name: Contract (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libwebkit2gtk-4.1-dev \
+            pkg-config
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-contract-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build bmi-server
+        shell: bash
+        run: cargo build --release -p bmi-server
+
+      # 127.0.0.1, never "localhost": on Windows runners localhost can resolve to IPv6 first.
+      - name: Start bmi-server on the fixture catalog
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bmi-data"
+          CATALOG_DIR="$GITHUB_WORKSPACE/crates/bmi-server/tests/fixtures/catalog" \
+          DATA_DIR="$RUNNER_TEMP/bmi-data" PORT=8789 \
+            target/release/bmi-server > "$RUNNER_TEMP/bmi-server.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/bmi-server.pid"
+          for _ in $(seq 60); do
+            if curl -fsS http://127.0.0.1:8789/healthz > /dev/null 2>&1; then exit 0; fi
+            sleep 0.5
+          done
+          echo "bmi-server did not become healthy within 30 s" >&2
+          cat "$RUNNER_TEMP/bmi-server.log" >&2
+          exit 1
+
+      - name: Run the app client against it
+        shell: bash
+        env:
+          BMI_SERVER_URL: http://127.0.0.1:8789
+        run: cargo test -p balatro-mod-manager live_backend -- --ignored --test-threads=1
+
+      - name: Stop bmi-server
+        if: always()
+        shell: bash
+        run: |
+          kill "$(cat "$RUNNER_TEMP/bmi-server.pid")" 2>/dev/null || true
+          cat "$RUNNER_TEMP/bmi-server.log" 2>/dev/null || true

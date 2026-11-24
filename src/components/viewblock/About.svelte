@@ -57,10 +57,10 @@
         <button
           class="status-button"
           on:click={() =>
-            openExternal("https://status.dasguney.com/status/bmm")}
+            openExternal("https://github.com/ahmmkh/balatro-mod-manager/issues")}
         >
           <Activity size={20} />
-          <span>Status Page</span>
+          <span>Issues</span>
         </button>
         <button class="kofi-button" on:click={handleKofiClick}>
           <div class="confetti-container">

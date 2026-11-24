@@ -58,11 +58,24 @@ use std::sync::Mutex;
 #[cfg(test)]
 pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+/// The per-user configuration directory the app keeps everything under (`<root>/Balatro/...`).
+///
+/// `$BMM_CONFIG_DIR` wins when set and non-empty; otherwise the platform default from `dirs`.
+/// The override exists because `dirs` ignores `HOME`/`XDG_CONFIG_HOME` on Windows, so tests and
+/// portable setups could not otherwise redirect where the app reads and writes. This is the only
+/// place in the workspace allowed to call `dirs::config_dir()`.
+pub fn config_root() -> Option<PathBuf> {
+    match std::env::var_os("BMM_CONFIG_DIR") {
+        Some(v) if !v.is_empty() => Some(PathBuf::from(v)),
+        _ => dirs::config_dir(),
+    }
+}
+
 /// Resolve the mods directory on the host (config dir).
 pub fn mods_dir() -> PathBuf {
     crate::local_mod_detection::resolve_mods_dir_path().unwrap_or_else(|_| {
         // Fallback to the platform config dir if detection failed
-        dirs::config_dir()
+        config_root()
             .unwrap_or_else(|| Path::new(".").to_path_buf())
             .join("Balatro")
             .join("Mods")

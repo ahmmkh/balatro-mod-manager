@@ -7,6 +7,8 @@ import { modEnabledStore, selectedModsStore } from "../stores/modStore";
 const invokeMock = vi.hoisted(() => vi.fn());
 const addMessageMock = vi.hoisted(() => vi.fn());
 
+// happy-dom has no Web Animations API; skip Svelte transitions (they raised an unhandled AbortError).
+vi.mock("svelte/transition", () => ({ fade: () => ({}), fly: () => ({}), scale: () => ({}), slide: () => ({}) }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));

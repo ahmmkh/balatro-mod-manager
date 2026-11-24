@@ -721,7 +721,7 @@ pub fn mod_dir_candidates() -> Result<Vec<PathBuf>, String> {
         .join("Mods");
 
     #[cfg(not(target_os = "linux"))]
-    let primary = dirs::config_dir()
+    let primary = crate::config_root()
         .ok_or_else(|| "Could not find config directory".to_string())?
         .join("Balatro")
         .join("Mods");

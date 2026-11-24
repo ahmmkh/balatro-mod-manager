@@ -8,7 +8,8 @@ use crate::models::{ModDownloads, ModMeta};
 use bmm_lib::errors::AppError;
 use serde::{Deserialize, Serialize};
 
-const BMI_CACHE_FILE: &str = "bmi_mods_cache";
+// v2: new backend; old caches hold thumbnail URLs and a `since` cursor from the retired server.
+const BMI_CACHE_FILE: &str = "bmi_mods_cache_v2";
 const THUMB_CACHE_TTL_SECS: u64 = 60 * 60 * 24 * 7;
 const MOD_DETAILS_CACHE_TTL_SECS: u64 = 60 * 60 * 48; // 48 hours
 
@@ -64,13 +65,8 @@ pub async fn get_mod_details(title: String, dir_name: String) -> Result<ModDetai
     let repo_url = detail
         .repo
         .clone()
-        .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
-        .or_else(|| {
-            detail
-                .homepage
-                .clone()
-                .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
-        })
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| detail.homepage.clone().filter(|s| !s.trim().is_empty()))
         .or_else(|| {
             detail.meta.and_then(|m| {
                 if m.repo.trim().is_empty() {
@@ -158,15 +154,45 @@ pub struct ArchiveModItem {
 // Fetch mod metadata and descriptions via the BMI HTTP service.
 #[tauri::command]
 pub async fn fetch_repo_mods(sort: Option<String>) -> Result<Vec<ArchiveModItem>, String> {
+    let sort_mode = SortMode::from_optional(sort.clone());
+    let (cache_dir, cache_file) = bmi_cache_paths(sort.as_deref())?;
+    let cache = load_bmi_cache(&cache_file).await;
+    match fetch_repo_mods_online(sort_mode, &cache_dir, &cache_file, cache.clone()).await {
+        Ok(items) => Ok(items),
+        Err(err) => cached_or_err(cache, err),
+    }
+}
+
+/// When the backend is unreachable, show the last cached catalog instead of an error; fail only
+/// when there is nothing cached.
+pub(crate) fn cached_or_err(
+    cache: Option<SyncCache>,
+    err: String,
+) -> Result<Vec<ArchiveModItem>, String> {
+    match cache {
+        Some(c) if !c.items.is_empty() => {
+            log::warn!(
+                "BMI unavailable ({err}); serving {} cached mods",
+                c.items.len()
+            );
+            Ok(c.items)
+        }
+        _ => Err(err),
+    }
+}
+
+async fn fetch_repo_mods_online(
+    sort_mode: SortMode,
+    cache_dir: &PathBuf,
+    cache_file: &PathBuf,
+    cache: Option<SyncCache>,
+) -> Result<Vec<ArchiveModItem>, String> {
     let client = BmiClient::new()?;
     client.check_health().await.map_err(|e| {
         let msg = format!("BMI health check failed: {e}");
         log::warn!("{msg}");
         msg
     })?;
-    let sort_mode = SortMode::from_optional(sort.clone());
-    let (cache_dir, cache_file) = bmi_cache_paths(sort.as_deref())?;
-    let cache = load_bmi_cache(&cache_file).await;
 
     let (mut items, mut latest_updated) = if let Some(existing) = cache.as_ref() {
         (existing.items.clone(), existing.last_updated_at.clone())
@@ -188,8 +214,9 @@ pub async fn fetch_repo_mods(sort: Option<String>) -> Result<Vec<ArchiveModItem>
         latest_updated = None;
     }
 
-    let force_full_refresh = matches!(sort_mode, SortMode::DownloadsAsc | SortMode::DownloadsDesc);
-    if force_full_refresh || items.is_empty() || latest_updated.is_none() {
+    // Download-count sorts no longer re-page the whole catalog: counts come from the small
+    // `/downloads` map and the list is ordered locally.
+    if items.is_empty() || latest_updated.is_none() {
         let (fresh, updated_at) = client.fetch_all_mods(sort_mode).await.map_err(|e| {
             let msg = format!("BMI fetch_all_mods failed: {e}");
             log::warn!("{msg}");
@@ -212,19 +239,17 @@ pub async fn fetch_repo_mods(sort: Option<String>) -> Result<Vec<ArchiveModItem>
         }
         latest_updated = bmi::pick_latest_updated(latest_updated, updated_at);
     }
-    if !matches!(sort_mode, SortMode::DownloadsAsc | SortMode::DownloadsDesc) {
-        let _ = client.refresh_downloads(&mut items, sort_mode).await;
-        sort_archive_items(&mut items, sort_mode);
-    }
+    let _ = client.refresh_downloads(&mut items, sort_mode).await;
+    sort_archive_items(&mut items, sort_mode);
 
     // Persist cache for future incremental sync
     let cache_state = SyncCache {
         last_updated_at: latest_updated,
         items: items.clone(),
     };
-    let _ = tokio::fs::create_dir_all(&cache_dir).await;
+    let _ = tokio::fs::create_dir_all(cache_dir).await;
     if let Ok(json) = serde_json::to_string_pretty(&cache_state) {
-        let _ = tokio::fs::write(&cache_file, json).await;
+        let _ = tokio::fs::write(cache_file, json).await;
     }
 
     Ok(items)
@@ -241,7 +266,7 @@ pub async fn fetch_repo_downloads(
 }
 
 fn bmi_cache_paths(sort: Option<&str>) -> Result<(PathBuf, PathBuf), String> {
-    let config_dir = dirs::config_dir()
+    let config_dir = bmm_lib::config_root()
         .ok_or_else(|| AppError::DirNotFound(PathBuf::from("config directory")).to_string())?;
     let cache_dir = config_dir.join("Balatro").join("mod_index_cache");
     let suffix = sort
@@ -290,7 +315,45 @@ fn sort_archive_items(items: &mut [ArchiveModItem], sort_mode: SortMode) {
                 other => other,
             })
         }
-        SortMode::DownloadsAsc | SortMode::DownloadsDesc => {}
+        SortMode::DownloadsAsc => items.sort_by(|a, b| {
+            downloads_total(a)
+                .cmp(&downloads_total(b))
+                .then_with(|| a.dir_name.cmp(&b.dir_name))
+        }),
+        SortMode::DownloadsDesc => items.sort_by(|a, b| {
+            downloads_total(b)
+                .cmp(&downloads_total(a))
+                .then_with(|| a.dir_name.cmp(&b.dir_name))
+        }),
+    }
+}
+
+fn downloads_total(item: &ArchiveModItem) -> u64 {
+    item.meta.downloads.as_ref().map_or(0, |d| d.total)
+}
+
+/// A minimal item for tests in other modules.
+#[cfg(test)]
+pub(crate) fn test_item(dir_name: &str) -> ArchiveModItem {
+    ArchiveModItem {
+        dir_name: dir_name.to_string(),
+        meta: ModMeta {
+            title: dir_name.to_string(),
+            author: String::new(),
+            repo: String::new(),
+            version: String::new(),
+            last_updated: 0,
+            categories: vec![],
+            requires_steamodded: false,
+            requires_talisman: false,
+            downloads: None,
+            download_url: None,
+            folder_name: String::new(),
+            automatic_version_check: false,
+        },
+        description: String::new(),
+        image_url: String::new(),
+        has_thumbnail: false,
     }
 }
 
@@ -645,13 +708,8 @@ pub async fn get_mod_repo_url(dir_name: String) -> Result<Option<String>, String
     let repo = detail
         .repo
         .clone()
-        .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
-        .or_else(|| {
-            detail
-                .homepage
-                .clone()
-                .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
-        })
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| detail.homepage.clone().filter(|s| !s.trim().is_empty()))
         .or_else(|| {
             detail.meta.and_then(|m| {
                 if m.repo.trim().is_empty() {
@@ -992,7 +1050,7 @@ mod tests {
         assert!(
             cache_file
                 .to_string_lossy()
-                .contains("bmi_mods_cache_default.json")
+                .contains("bmi_mods_cache_v2_default.json")
         );
     }
 
@@ -1004,7 +1062,7 @@ mod tests {
         assert!(
             cache_file
                 .to_string_lossy()
-                .contains("bmi_mods_cache_name_asc.json")
+                .contains("bmi_mods_cache_v2_name_asc.json")
         );
     }
 
@@ -1028,7 +1086,7 @@ mod tests {
         assert!(
             cache_file
                 .to_string_lossy()
-                .contains("bmi_mods_cache_.json")
+                .contains("bmi_mods_cache_v2_.json")
         );
     }
 
@@ -1149,19 +1207,37 @@ mod tests {
     }
 
     #[test]
-    fn test_sort_archive_items_downloads_noop() {
-        let mut items = vec![
-            make_test_item("Mod B", "b", 1000),
-            make_test_item("Mod A", "a", 1000),
-        ];
-
-        let original_order: Vec<_> = items.iter().map(|i| i.dir_name.clone()).collect();
-
-        // Downloads sorting is a no-op (handled elsewhere)
+    fn test_sort_archive_items_by_downloads() {
+        let with = |dir: &str, total: u64| {
+            let mut i = make_test_item(dir, dir, 1);
+            i.meta.downloads = Some(ModDownloads { total, today: 0 });
+            i
+        };
+        let mut items = vec![with("b", 5), with("a", 5), with("c", 9), with("d", 0)];
+        sort_archive_items(&mut items, SortMode::DownloadsDesc);
+        let ids = |v: &[ArchiveModItem]| v.iter().map(|i| i.dir_name.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&items), ["c", "a", "b", "d"]);
         sort_archive_items(&mut items, SortMode::DownloadsAsc);
+        assert_eq!(ids(&items), ["d", "a", "b", "c"]);
+    }
 
-        let new_order: Vec<_> = items.iter().map(|i| i.dir_name.clone()).collect();
-        assert_eq!(original_order, new_order);
+    #[test]
+    fn cached_or_err_serves_cache_only_when_non_empty() {
+        let cache = |n: usize| SyncCache {
+            last_updated_at: None,
+            items: (0..n)
+                .map(|i| make_test_item("m", &format!("m{i}"), 1))
+                .collect(),
+        };
+        assert_eq!(
+            cached_or_err(Some(cache(2)), "down".into()).unwrap().len(),
+            2
+        );
+        assert_eq!(
+            cached_or_err(Some(cache(0)), "down".into()).unwrap_err(),
+            "down"
+        );
+        assert_eq!(cached_or_err(None, "down".into()).unwrap_err(), "down");
     }
 
     #[test]

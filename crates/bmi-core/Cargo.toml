@@ -1,0 +1,10 @@
+[package]
+name = "bmi-core"
+version = "0.1.0"
+edition = "2024"
+description = "Pure Balatro Mod Index wire types and catalog operations (no I/O)"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

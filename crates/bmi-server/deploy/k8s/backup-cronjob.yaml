@@ -1,0 +1,42 @@
+# Nightly snapshot of the counts database only (never reports.sqlite), 7 kept, on the same volume.
+# Off-box copies are a separate, user-approved step (plan Task 10a).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: bmi-backup
+  namespace: bmi
+spec:
+  schedule: "23 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: backup
+              image: bmi-server:85be35b
+              imagePullPolicy: IfNotPresent
+              args: ["backup", "--keep", "7"]
+              env:
+                - {name: DATA_DIR, value: /data}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              volumeMounts:
+                - {name: data, mountPath: /data}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: data
+              persistentVolumeClaim: {claimName: bmi-data}
+            - name: tmp
+              emptyDir: {}

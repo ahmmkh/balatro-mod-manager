@@ -295,7 +295,7 @@ fn ensure_prefix_log_dir(envs: &[(String, String)]) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn open_prefix_log_file() -> Result<std::fs::File, String> {
-    let Some(config_dir) = dirs::config_dir() else {
+    let Some(config_dir) = bmm_lib::config_root() else {
         return Err("Failed to resolve config directory for prefix log".to_string());
     };
     let log_dir = config_dir.join("Balatro/logs");
@@ -718,7 +718,7 @@ pub async fn launch_balatro(state: tauri::State<'_, AppState>) -> Result<(), Str
                 && current.as_deref() != Some(latest.as_str())
             {
                 let _ = db.set_lovely_version(&latest);
-                if let Some(config_dir) = dirs::config_dir() {
+                if let Some(config_dir) = bmm_lib::config_root() {
                     let _ = remove_file(config_dir.join("Balatro/bins/liblovely.so"));
                 }
                 let _ = remove_file(path.join("liblovely.so"));

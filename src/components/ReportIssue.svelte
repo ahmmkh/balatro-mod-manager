@@ -12,6 +12,21 @@
   const DESC_MAX = 1200;
   let submitting = $state(false);
 
+  // Exactly what will be sent, shown before the user consents.
+  type ReportPreview = {
+    os: string;
+    arch: string;
+    cpu: string;
+    gpu: string;
+    ram: string;
+    log_filename: string;
+    log: string;
+    log_bytes: number;
+  };
+  let preview = $state<ReportPreview | null>(null);
+  let previewError = $state<string | null>(null);
+  let consent = $state(false);
+
   // Error fallback modal
   let showCopyPrompt = $state(false);
   let copying = $state(false);
@@ -22,7 +37,27 @@
   function resetForm() {
     title = "";
     description = "";
+    consent = false;
   }
+
+  async function loadPreview() {
+    previewError = null;
+    consent = false;
+    try {
+      preview = await invoke<ReportPreview>("preview_report");
+    } catch (e) {
+      preview = null;
+      previewError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // Refresh the preview each time the form opens.
+  let wasVisible = false;
+  $effect(() => {
+    const visible = $reportIssueStore.visible;
+    if (visible && !wasVisible) void loadPreview();
+    wasVisible = visible;
+  });
 
   function close() {
     reportIssueStore.set({ visible: false });
@@ -38,6 +73,7 @@
       addMessage("Please enter a title.", "warning");
       return;
     }
+    if (!consent) return;
     submitting = true;
     try {
       const mm_version = await invoke<string>("get_app_version");
@@ -160,11 +196,44 @@
       ></textarea>
       <div class="counter">{description.length}/{DESC_MAX}</div>
 
+      <details class="sent-panel">
+        <summary>What will be sent</summary>
+        {#if preview}
+          <p class="desc">
+            {preview.os} · {preview.arch} · {preview.cpu} · {preview.gpu} · {preview.ram}
+          </p>
+          <label class="input-label" for="report-log-sent"
+            >{preview.log_filename} ({preview.log_bytes} bytes, personal paths,
+            e-mail addresses and IP addresses removed)</label
+          >
+          <textarea
+            id="report-log-sent"
+            class="text-area default-scrollbar log-sent"
+            rows={6}
+            readonly
+            data-testid="report-log">{preview.log}</textarea
+          >
+        {:else if previewError}
+          <p class="desc error">Could not prepare the log: {previewError}</p>
+        {:else}
+          <p class="desc">Preparing…</p>
+        {/if}
+      </details>
+
+      <label class="consent">
+        <input type="checkbox" bind:checked={consent} />
+        I understand this report includes the log shown below
+      </label>
+
       <div class="buttons">
         <button class="cancel" onclick={close} disabled={submitting}
           >Cancel</button
         >
-        <button class="submit" onclick={handleSubmit} disabled={submitting}>
+        <button
+          class="submit"
+          onclick={handleSubmit}
+          disabled={submitting || !consent || !preview}
+        >
           {#if submitting}Submitting...{:else}Submit{/if}
         </button>
       </div>
@@ -212,6 +281,24 @@
 {/if}
 
 <style>
+  .sent-panel {
+    margin: 0.5rem 0;
+  }
+  .sent-panel summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .log-sent {
+    font-family: monospace;
+    font-size: 0.75rem;
+  }
+  .consent {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: 0.85rem;
+    margin: 0.5rem 0;
+  }
   .fab-group {
     position: fixed;
     left: 1rem;

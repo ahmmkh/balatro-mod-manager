@@ -53,7 +53,7 @@
       let tag = "";
       // Prefer tags API to avoid 404s when no releases exist
       const tagRes = await fetch(
-        "https://api.github.com/repos/skyline69/balatro-mod-manager/tags?per_page=1",
+        "https://api.github.com/repos/ahmmkh/balatro-mod-manager/tags?per_page=1",
         { headers: { Accept: "application/vnd.github+json" } },
       );
       if (tagRes.ok) {
@@ -65,7 +65,7 @@
       if (!tag) {
         // Fallback: newest release from list (handles repos without 'latest')
         const relRes = await fetch(
-          "https://api.github.com/repos/skyline69/balatro-mod-manager/releases?per_page=1",
+          "https://api.github.com/repos/ahmmkh/balatro-mod-manager/releases?per_page=1",
           { headers: { Accept: "application/vnd.github+json" } },
         );
         if (relRes.ok) {

@@ -7,7 +7,7 @@ edition = "2024"
 keywords = ["gaming", "mods", "balatro", "manager", "tauri"]
 categories = ["games", "development-tools", "gui"]
 readme = "README.md"
-repository = "https://github.com/skyline69/balatro-mod-manager"
+repository = "https://github.com/ahmmkh/balatro-mod-manager"
 publish = false
 
 
@@ -26,6 +26,7 @@ serde_json = "1"
 tauri-plugin-dialog = "2.7.2"
 bmm-lib = { workspace = true }
 dirs = "6.0.0"
+regex = "1"
 tauri-plugin-fs = "2"
 log = "0.4.33"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }

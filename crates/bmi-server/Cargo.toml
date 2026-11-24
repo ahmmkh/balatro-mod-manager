@@ -1,0 +1,44 @@
+[package]
+name = "bmi-server"
+version = "0.1.0"
+edition = "2024"
+description = "Balatro Mod Index backend"
+publish = false
+
+[lib]
+name = "bmi_server"
+
+[[bin]]
+name = "bmi-server"
+path = "src/main.rs"
+
+[dependencies]
+bmi-core = { path = "../bmi-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rand = "0.9"
+anyhow = "1"
+parking_lot = "0.12"
+sha2 = "0.10"
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "fs", "time", "sync", "process"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["compression-gzip", "compression-br"] }
+reqwest = { version = "0.13", features = ["json"] }
+flate2 = "1"
+base64 = "0.22"
+tokio-util = { version = "0.7", features = ["io"] }
+http-body-util = "0.1"
+tracing = "0.1"
+async-trait = "0.1"
+futures-util = "0.3"
+subtle = "2"
+url = "2"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

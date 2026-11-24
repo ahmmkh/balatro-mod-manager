@@ -26,11 +26,11 @@ describe("About view", () => {
   it("opens the BMM status page when status button is clicked", async () => {
     render(About);
 
-    const statusButton = screen.getByRole("button", { name: /status page/i });
+    const statusButton = screen.getByRole("button", { name: /issues/i });
     await fireEvent.click(statusButton);
 
     expect(openExternal).toHaveBeenCalledWith(
-      "https://status.dasguney.com/status/bmm",
+      "https://github.com/ahmmkh/balatro-mod-manager/issues",
     );
   });
 

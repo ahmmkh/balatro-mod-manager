@@ -8,35 +8,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::models::{ModDownloads, ModMeta};
 
-pub const DEFAULT_BMI_SERVER_URL: &str = "https://api-bmi.dasguney.com";
-
-/// Direct origin server IP for the BMI API.
-///
-/// # Why this exists
-/// Some users experience extreme latency (10-20+ seconds) when connecting through
-/// Cloudflare due to DNS resolution issues, regional blocking, or proxy slowness.
-/// Connecting directly to the origin IP bypasses these issues.
-///
-/// # How it works
-/// - The app first tries the primary domain (`api-bmi.dasguney.com`)
-/// - If any request takes longer than `FAST_TIMEOUT` (3 seconds), the app
-///   "hot-swaps" to the direct IP for the remainder of the session
-/// - The `Host: api-bmi.dasguney.com` header is sent so the server routes correctly
-///
-/// # When to update
-/// Update this IP if:
-/// - The BMI API server migrates to a new host
-/// - The hosting provider changes
-/// - You see "connection refused" errors when falling back to IP
-///
-/// To find the current IP: `dig +short api-bmi.dasguney.com` (look for the non-Cloudflare IP)
-/// or check the server's hosting dashboard.
-pub const BMI_FALLBACK_IP: &str = "45.136.18.191";
+/// Base URL of the BMI API: the `bmi-server` crate in this workspace, deployed on kh-kube behind a
+/// Cloudflare Tunnel (see `docs/maintaining.md`). Override at runtime with the `BMI_SERVER_URL`
+/// environment variable, e.g. to test against a local server.
+pub const DEFAULT_BMI_SERVER_URL: &str = "https://bmi.khatab.me";
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-/// Timeout before switching to fallback IP. If a request takes longer than this,
-/// we cancel it and retry with the direct IP connection.
-const FAST_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_RETRIES: u32 = 3;
 const PAGE_LIMIT: usize = 200;
 
@@ -75,21 +52,10 @@ impl SortMode {
 }
 
 /// HTTP client for the Balatro Mod Index (BMI) API.
-///
-/// Handles connection to the mod repository with automatic fallback to direct IP
-/// if the primary domain is slow or unreachable. See [`BMI_FALLBACK_IP`] for details.
 #[derive(Clone)]
 pub struct BmiClient {
-    /// Primary API URL (the domain)
     base_url: Url,
-    /// Direct IP fallback URL, used when primary is slow
-    fallback_url: Option<Url>,
-    /// Standard HTTP client with normal timeout
     client: reqwest::Client,
-    /// Fast HTTP client used for timeout racing
-    fast_client: reqwest::Client,
-    /// Flag indicating whether we've switched to fallback mode for this session
-    use_fallback: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -178,6 +144,11 @@ pub struct SyncCache {
     pub items: Vec<crate::commands::repo::ArchiveModItem>,
 }
 
+/// Parse the `GET /downloads` payload: `{ "<id>": {"total","today","week"}, … }`.
+pub(crate) fn parse_downloads_map(bytes: &[u8]) -> Result<HashMap<String, ModDownloads>, String> {
+    serde_json::from_slice(bytes).map_err(|e| format!("bad /downloads payload: {e}"))
+}
+
 impl BmiClient {
     pub fn new() -> Result<Self, String> {
         let base_url = bmi_server_url()?;
@@ -187,21 +158,7 @@ impl BmiClient {
             .user_agent("balatro-mod-manager/1.0")
             .build()
             .map_err(|e| e.to_string())?;
-        let fast_client = reqwest::Client::builder()
-            .timeout(FAST_TIMEOUT)
-            .connect_timeout(FAST_TIMEOUT)
-            .user_agent("balatro-mod-manager/1.0")
-            .danger_accept_invalid_certs(true)
-            .build()
-            .map_err(|e| e.to_string())?;
-        let fallback_url = Url::parse(&format!("https://{BMI_FALLBACK_IP}/")).ok();
-        Ok(Self {
-            base_url,
-            fallback_url,
-            client,
-            fast_client,
-            use_fallback: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        })
+        Ok(Self { base_url, client })
     }
 
     pub async fn check_health(&self) -> Result<(), String> {
@@ -211,7 +168,7 @@ impl BmiClient {
             .map_err(|e| e.to_string())?;
         log::debug!("Checking BMI health at: {}", url);
         let resp = self
-            .send_request(|| self.http_client().get(url.clone()))
+            .send_with_backoff(|| self.http_client().get(url.clone()))
             .await?;
         if resp.status().is_success() {
             log::debug!("BMI health check passed");
@@ -241,28 +198,16 @@ impl BmiClient {
     }
 
     pub fn http_client(&self) -> &reqwest::Client {
-        if self.use_fallback.load(std::sync::atomic::Ordering::Relaxed) {
-            &self.fast_client
-        } else {
-            &self.client
-        }
+        &self.client
     }
 
     fn effective_base_url(&self) -> &Url {
-        if self.use_fallback.load(std::sync::atomic::Ordering::Relaxed) {
-            self.fallback_url.as_ref().unwrap_or(&self.base_url)
-        } else {
-            &self.base_url
-        }
-    }
-
-    fn is_using_fallback(&self) -> bool {
-        self.use_fallback.load(std::sync::atomic::Ordering::Relaxed)
+        &self.base_url
     }
 
     pub async fn get_bytes(&self, url: Url) -> Result<Vec<u8>, String> {
         let resp = self
-            .send_request(|| self.http_client().get(url.clone()))
+            .send_with_backoff(|| self.http_client().get(url.clone()))
             .await?;
         resp.bytes()
             .await
@@ -294,33 +239,18 @@ impl BmiClient {
         Ok((all, latest_updated))
     }
 
+    /// All download counts in one small request (`GET /downloads`). `_sort` is kept so existing
+    /// call sites compile; the counts are not ordered.
     pub async fn fetch_downloads_map(
         &self,
-        sort: SortMode,
+        _sort: SortMode,
     ) -> Result<HashMap<String, ModDownloads>, String> {
-        let mut cursor: Option<String> = None;
-        let mut out: HashMap<String, ModDownloads> = HashMap::new();
-        loop {
-            let page = self.fetch_mods_page(cursor.as_deref(), sort).await?;
-            for item in page.items {
-                let id = match item.id.clone().or(item.dir_name.clone()) {
-                    Some(val) => val,
-                    None => continue,
-                };
-                if let Some(downloads) = item
-                    .downloads
-                    .clone()
-                    .or_else(|| item.meta.as_ref().and_then(|m| m.downloads.clone()))
-                {
-                    out.insert(id, downloads);
-                }
-            }
-            match page.next_cursor {
-                Some(next) => cursor = Some(next),
-                None => break,
-            }
-        }
-        Ok(out)
+        let url = self
+            .effective_base_url()
+            .join("downloads")
+            .map_err(|e| e.to_string())?;
+        let bytes = self.get_bytes(url).await?;
+        parse_downloads_map(&bytes)
     }
 
     pub async fn refresh_downloads(
@@ -371,7 +301,7 @@ impl BmiClient {
             .join(&format!("mods/{encoded}"))
             .map_err(|e| e.to_string())?;
         let resp = self
-            .send_request(|| self.http_client().get(url.clone()))
+            .send_with_backoff(|| self.http_client().get(url.clone()))
             .await?;
         decode_json(resp, "mod detail").await
     }
@@ -389,7 +319,7 @@ impl BmiClient {
             .join(&format!("mods/{encoded}/download"))
             .map_err(|e| e.to_string())?;
         let resp = self
-            .send_request(|| self.http_client().post(url.clone()))
+            .send_with_backoff(|| self.http_client().post(url.clone()))
             .await?;
 
         let status = resp.status();
@@ -445,7 +375,7 @@ impl BmiClient {
         }
         log::debug!("Fetching mods page: {}", url);
         let resp = self
-            .send_request(|| self.http_client().get(url.clone()))
+            .send_with_backoff(|| self.http_client().get(url.clone()))
             .await?;
         decode_json(resp, "mods page").await
     }
@@ -470,104 +400,9 @@ impl BmiClient {
             }
         }
         let resp = self
-            .send_request(|| self.http_client().get(url.clone()))
+            .send_with_backoff(|| self.http_client().get(url.clone()))
             .await?;
         decode_json(resp, "mods changed page").await
-    }
-
-    async fn send_request<F>(&self, make_req: F) -> Result<reqwest::Response, String>
-    where
-        F: Fn() -> reqwest::RequestBuilder,
-    {
-        // If already using fallback, go straight to it
-        if self.is_using_fallback() {
-            return self
-                .send_with_backoff(|| make_req().header("Host", "api-bmi.dasguney.com"))
-                .await;
-        }
-
-        // Race the request against a 3s timer
-        let request_fut = self
-            .client
-            .execute(make_req().build().map_err(|e| e.to_string())?);
-
-        tokio::select! {
-            result = request_fut => {
-                match result {
-                    Ok(resp) if resp.status().as_u16() != 429 => {
-                        return resp.error_for_status().map_err(|e| {
-                            log::error!("BMI request failed with HTTP error: {}", e);
-                            e.to_string()
-                        });
-                    }
-                    Ok(_) => {
-                        // 429 rate limited, fall through to retry logic
-                    }
-                    Err(e) => {
-                        log::debug!("BMI request failed: {}", e);
-                        // Fall through to try fallback
-                    }
-                }
-            }
-            _ = tokio::time::sleep(FAST_TIMEOUT) => {
-                // Request took too long - immediately switch to fallback
-                log::info!("BMI request slow (>3s), hot-switching to direct IP fallback");
-                if let Some(fallback) = &self.fallback_url
-                    && let Ok(original_req) = make_req().build()
-                {
-                    let method = original_req.method().clone();
-                    let url = original_req.url();
-                    let path_and_query = url.path().to_string()
-                        + url.query().map(|q| format!("?{}", q)).as_deref().unwrap_or("");
-                    if let Ok(fallback_url) =
-                        fallback.join(path_and_query.trim_start_matches('/'))
-                    {
-                        let fallback_result = self
-                            .fast_client
-                            .request(method, fallback_url)
-                            .header("Host", "api-bmi.dasguney.com")
-                            .send()
-                            .await;
-                        match fallback_result {
-                            Ok(resp) if resp.status().is_success() => {
-                                log::info!(
-                                    "BMI fallback successful, using direct IP for future requests"
-                                );
-                                self.use_fallback
-                                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                                return resp.error_for_status().map_err(|e| e.to_string());
-                            }
-                            Ok(resp) if resp.status().as_u16() == 429 => {
-                                log::info!(
-                                    "BMI fallback connected (rate limited), using direct IP for future requests"
-                                );
-                                self.use_fallback
-                                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                                // Fall through to retry logic
-                            }
-                            Ok(resp) => {
-                                log::debug!("BMI fallback returned status: {}", resp.status());
-                            }
-                            Err(e) => {
-                                log::debug!("BMI fallback failed: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Fall back to normal retry with current effective URL
-        let using_fallback = self.is_using_fallback();
-        self.send_with_backoff(|| {
-            let req = make_req();
-            if using_fallback {
-                req.header("Host", "api-bmi.dasguney.com")
-            } else {
-                req
-            }
-        })
-        .await
     }
 
     async fn send_with_backoff<F>(&self, make_req: F) -> Result<reqwest::Response, String>
@@ -904,20 +739,6 @@ fn normalize_thumbnail_url(client: &BmiClient, raw: &str) -> Result<String, Stri
         if let Some(path) = normalize_thumbnail_path(url.path()) {
             url.set_path(&path);
         }
-        // Rewrite to fallback IP if we're using fallback mode
-        if client.is_using_fallback()
-            && let Some(fallback) = &client.fallback_url
-        {
-            let path_and_query = url.path().to_string()
-                + url
-                    .query()
-                    .map(|q| format!("?{}", q))
-                    .as_deref()
-                    .unwrap_or("");
-            if let Ok(rewritten) = fallback.join(path_and_query.trim_start_matches('/')) {
-                return Ok(rewritten.to_string());
-            }
-        }
         return Ok(url.to_string());
     }
     let path = normalize_thumbnail_path(raw).unwrap_or_else(|| raw.to_string());
@@ -1161,6 +982,163 @@ mod tests {
 
         assert_eq!(collected.len(), 2);
         assert_eq!(latest, Some("8".to_string()));
+    }
+
+    /// Live check against a running backend, e.g.:
+    ///   DATA_DIR=/tmp/bmi CATALOG_DIR=<built catalog> PORT=8789 target/release/bmi-server
+    ///   BMI_SERVER_URL=http://127.0.0.1:8789 cargo test -p balatro-mod-manager live_backend -- --ignored
+    #[tokio::test]
+    #[ignore = "requires a running BMI backend (set BMI_SERVER_URL)"]
+    async fn live_backend_roundtrip() {
+        let client = BmiClient::new().expect("client");
+        client.check_health().await.expect("health");
+
+        let (all, latest) = client
+            .fetch_all_mods(SortMode::NameAsc)
+            .await
+            .expect("fetch_all_mods");
+        assert!(
+            all.len() > 100,
+            "expected a populated catalog, got {}",
+            all.len()
+        );
+        assert!(
+            latest.is_some(),
+            "catalog should report an updated_at cursor"
+        );
+        assert!(
+            all.iter().all(|m| m.meta.downloads.is_some()),
+            "every mod needs `downloads` or the app discards its cache"
+        );
+        assert!(all.iter().all(|m| {
+            m.meta
+                .download_url
+                .as_deref()
+                .is_some_and(|u| u.starts_with("bmi://"))
+        }));
+        let with_thumb = all
+            .iter()
+            .find(|m| m.has_thumbnail)
+            .expect("some thumbnail");
+        let bytes = client
+            .get_bytes(Url::parse(&with_thumb.image_url).expect("thumb url"))
+            .await
+            .expect("thumbnail fetch");
+        assert!(bytes.starts_with(b"RIFF"), "thumbnail should be a webp");
+
+        let id = &all[0].dir_name;
+        let url = client.post_download(id).await.expect("post_download");
+        assert!(url.starts_with("http"), "resolved download url: {url}");
+
+        // The lean map lists mods that have been downloaded at least once.
+        let counts = client
+            .fetch_downloads_map(SortMode::NameAsc)
+            .await
+            .expect("downloads map");
+        assert!(
+            counts.get(id).is_some_and(|d| d.total >= 1),
+            "counts: {counts:?}"
+        );
+
+        let (changed, _) = client
+            .fetch_changed_mods("0", SortMode::UpdatedDesc)
+            .await
+            .expect("changed");
+        // Mods without a `last-updated` stamp never show up as "changed"; the first sync is a full fetch.
+        assert!(!changed.is_empty() && changed.len() <= all.len());
+    }
+
+    /// Wire-drift guard: `mod_item.json` is a real response from `bmi-server` (`GET /mods/{id}` on
+    /// the contract fixture). If the server's JSON changes shape, this fails before users do.
+    #[test]
+    fn server_mod_item_parses() {
+        let raw = include_str!("../../crates/bmi-server/tests/fixtures/mod_item.json");
+        let item: BmiMod = serde_json::from_str(raw).expect("server item parses");
+        let client = BmiClient {
+            base_url: Url::parse("http://127.0.0.1:8789/").unwrap(),
+            client: reqwest::Client::new(),
+        };
+        let (archive, updated) = bmi_to_archive(item, &client).expect("converts");
+        assert_eq!(archive.dir_name, "author000@Fixture000");
+        assert!(archive.has_thumbnail);
+        assert!(
+            archive
+                .image_url
+                .ends_with("/thumbnails/author000%40Fixture000.webp"),
+            "{}",
+            archive.image_url
+        );
+        assert!(archive.meta.downloads.is_some());
+        assert_eq!(
+            archive.meta.download_url.as_deref(),
+            Some("bmi://author000@Fixture000")
+        );
+        assert!(updated.is_some());
+    }
+
+    #[test]
+    fn downloads_map_parses_lean_payload() {
+        let map = parse_downloads_map(br#"{"a@Alpha":{"total":5,"today":1,"week":2},"b@Beta":{"total":0,"today":0,"week":0}}"#)
+            .expect("parse");
+        assert_eq!(map["a@Alpha"].total, 5);
+        assert_eq!(map["a@Alpha"].today, 1);
+        assert_eq!(map.len(), 2);
+        assert!(parse_downloads_map(b"not json").is_err());
+    }
+
+    /// One-shot local stub: records every request line so we can assert how many requests a
+    /// downloads refresh makes and to which path.
+    async fn stub_server(
+        body: &'static str,
+    ) -> (Url, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let seen = seen2.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    let line = String::from_utf8_lossy(&buf[..n])
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
+                    seen.lock().unwrap().push(line);
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        (Url::parse(&format!("http://{addr}/")).unwrap(), seen)
+    }
+
+    #[tokio::test]
+    async fn refresh_downloads_makes_exactly_one_downloads_request() {
+        let (base, seen) = stub_server(r#"{"a@Alpha":{"total":7,"today":2,"week":3}}"#).await;
+        let client = BmiClient {
+            base_url: base,
+            client: reqwest::Client::new(),
+        };
+        let mut items = vec![crate::commands::repo::test_item("a@Alpha")];
+        client
+            .refresh_downloads(&mut items, SortMode::NameAsc)
+            .await
+            .expect("refresh");
+        assert_eq!(items[0].meta.downloads.as_ref().map(|d| d.total), Some(7));
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].starts_with("GET /downloads "), "{seen:?}");
     }
 
     #[test]

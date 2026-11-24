@@ -1,0 +1,10 @@
+.git
+node_modules
+build
+target
+/src
+.svelte-kit
+docs
+.superpowers
+*.md
+!crates/**/*.md
