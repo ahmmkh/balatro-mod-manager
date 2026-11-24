@@ -1,0 +1,16 @@
+[package]
+name = "bmi-server"
+version = "0.1.0"
+edition = "2024"
+description = "Balatro Mod Index backend"
+publish = false
+
+[lib]
+name = "bmi_server"
+
+[[bin]]
+name = "bmi-server"
+path = "src/main.rs"
+
+[dependencies]
+bmi-core = { path = "../bmi-core" }

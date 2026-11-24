@@ -2,6 +2,8 @@
 members = [
   "src-tauri",
   "src-tauri/bmm-lib",
+  "crates/bmi-core",
+  "crates/bmi-server",
 ]
 resolver = "2"
 

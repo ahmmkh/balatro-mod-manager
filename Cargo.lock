@@ -479,6 +479,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmi-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bmi-server"
+version = "0.1.0"
+dependencies = [
+ "bmi-core",
+]
+
+[[package]]
 name = "bmm-lib"
 version = "0.4.1"
 dependencies = [
