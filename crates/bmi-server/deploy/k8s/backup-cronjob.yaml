@@ -23,7 +23,7 @@ spec:
             seccompProfile: {type: RuntimeDefault}
           containers:
             - name: backup
-              image: bmi-server:dev            # same tag as the Deployment
+              image: bmi-server:fcb11d6
               imagePullPolicy: IfNotPresent
               args: ["backup", "--keep", "7"]
               env:

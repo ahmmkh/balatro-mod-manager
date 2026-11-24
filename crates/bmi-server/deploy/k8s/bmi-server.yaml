@@ -21,7 +21,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: bmi-server
-          image: bmi-server:dev            # replaced with bmi-server:<git-sha> at deploy time
+          image: bmi-server:fcb11d6
           imagePullPolicy: IfNotPresent
           ports:
             - {name: http, containerPort: 8080}
