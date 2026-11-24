@@ -1,0 +1,56 @@
+name: Server - format and image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/server-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/server-ci.yml"
+
+# Tests and clippy for bmi-core/bmi-server run on all three OSes in ci.yml; this job only covers
+# what is Linux-specific: formatting and that the container image builds and passes its smoke test.
+jobs:
+  image:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python with Pillow (builds the smoke-test catalog)
+        run: pip install Pillow
+
+      - name: Check out the index repo for the smoke-test catalog
+        uses: actions/checkout@v6
+        with:
+          repository: ahmmkh/Balatro-Mod-Index
+          path: index-repo
+
+      - name: Build image
+        run: docker buildx build --platform linux/amd64 --load -f crates/bmi-server/Dockerfile -t bmi-server:ci .
+
+      - name: Image smoke test
+        env:
+          INDEX_REPO: ${{ github.workspace }}/index-repo
+        run: bash crates/bmi-server/tests/image-smoke.sh bmi-server:ci python
