@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bmi-server
+  namespace: bmi
+  labels: {app: bmi-server}
+spec:
+  replicas: 1            # SQLite = one writer
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: bmi-server}
+  template:
+    metadata:
+      labels: {app: bmi-server}
+    spec:
+      terminationGracePeriodSeconds: 30   # SIGTERM flushes counters well inside this
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: bmi-server
+          image: bmi-server:dev            # replaced with bmi-server:<git-sha> at deploy time
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: PORT, value: "8080"}
+            - {name: DATA_DIR, value: /data}
+            - {name: TRUST_PROXY, value: "1"}
+            - {name: REPORTS_PER_DAY, value: "300"}
+            - {name: REPORTS_MAX_BYTES, value: "1073741824"}
+            - name: ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef: {name: bmi-env, key: ADMIN_TOKEN}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: "1", memory: 1Gi}   # headroom for the thumbnail build spike (Pillow)
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:             # TCP only: /healthz is 503 while the catalog loads
+            tcpSocket: {port: http}
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: bmi-data}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bmi-server
+  namespace: bmi
+spec:
+  selector: {app: bmi-server}
+  ports:
+    - {name: http, port: 8080, targetPort: http}

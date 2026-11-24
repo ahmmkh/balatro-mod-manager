@@ -1,0 +1,35 @@
+# Static local volume on the fixed-size ext4 image mounted at /srv/bmi (see README, host step).
+# No StorageClass object exists or is needed; the name only has to match between PV and PVC.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: bmi-data
+spec:
+  capacity:
+    storage: 8Gi
+  accessModes: ["ReadWriteOnce"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: bmi-local
+  volumeMode: Filesystem
+  local:
+    path: /srv/bmi
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: ["kh-kube"]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bmi-data
+  namespace: bmi
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: bmi-local
+  volumeName: bmi-data
+  resources:
+    requests:
+      storage: 8Gi
