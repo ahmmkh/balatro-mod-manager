@@ -1050,6 +1050,34 @@ mod tests {
         assert!(!changed.is_empty() && changed.len() <= all.len());
     }
 
+    /// Wire-drift guard: `mod_item.json` is a real response from `bmi-server` (`GET /mods/{id}` on
+    /// the contract fixture). If the server's JSON changes shape, this fails before users do.
+    #[test]
+    fn server_mod_item_parses() {
+        let raw = include_str!("../../crates/bmi-server/tests/fixtures/mod_item.json");
+        let item: BmiMod = serde_json::from_str(raw).expect("server item parses");
+        let client = BmiClient {
+            base_url: Url::parse("http://127.0.0.1:8789/").unwrap(),
+            client: reqwest::Client::new(),
+        };
+        let (archive, updated) = bmi_to_archive(item, &client).expect("converts");
+        assert_eq!(archive.dir_name, "author000@Fixture000");
+        assert!(archive.has_thumbnail);
+        assert!(
+            archive
+                .image_url
+                .ends_with("/thumbnails/author000%40Fixture000.webp"),
+            "{}",
+            archive.image_url
+        );
+        assert!(archive.meta.downloads.is_some());
+        assert_eq!(
+            archive.meta.download_url.as_deref(),
+            Some("bmi://author000@Fixture000")
+        );
+        assert!(updated.is_some());
+    }
+
     #[test]
     fn downloads_map_parses_lean_payload() {
         let map = parse_downloads_map(br#"{"a@Alpha":{"total":5,"today":1,"week":2},"b@Beta":{"total":0,"today":0,"week":0}}"#)

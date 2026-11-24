@@ -1,0 +1,28 @@
+{
+    "id": "author000@Fixture000",
+    "name": "Fixture Mod 000",
+    "updated_at": "1795552807",
+    "description": "# Fixture 0\nSynthetic mod used by contract tests.",
+    "meta": {
+        "author": "author000",
+        "automatic-version-check": false,
+        "categories": [
+            "Joker",
+            "Content"
+        ],
+        "downloadURL": "https://github.com/author000/Fixture000/archive/refs/heads/main.zip",
+        "folderName": "Fixture000",
+        "last-updated": 1700000000,
+        "repo": "https://github.com/author000/Fixture000",
+        "requires-steamodded": false,
+        "requires-talisman": false,
+        "title": "Fixture Mod 000",
+        "version": "1.0.0"
+    },
+    "thumbnail_url": "/thumbnails/author000@Fixture000.webp",
+    "downloads": {
+        "total": 0,
+        "today": 0,
+        "week": 0
+    }
+}
