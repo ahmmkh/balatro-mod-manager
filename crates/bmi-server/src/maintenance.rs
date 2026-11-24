@@ -87,7 +87,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(has_reports, 0);
-        // same-day rerun replaces rather than fails
+        // same-day rerun replaces rather than fails (Windows refuses to replace an open file)
+        drop(snap);
         backup(&conn, &out, 2, 1_794_571_200 + 3 * 86_400).unwrap();
     }
 }

@@ -4,7 +4,7 @@ set -euo pipefail
 IMG="${1:-bmi-server:dev}"; PY="${2:-python3}"
 INDEX_REPO="${INDEX_REPO:-$HOME/Projects/balatro-mod-index}"
 T=$(mktemp -d); chmod 777 "$T"; CID=""
-trap '[ -n "$CID" ] && docker rm -f "$CID" >/dev/null 2>&1; rm -rf "$T"' EXIT
+trap '[ -n "$CID" ] && docker rm -f "$CID" >/dev/null 2>&1; rm -rf "$T" || true' EXIT
 (cd "$INDEX_REPO" && "$PY" scripts/build_index.py --out "$T/catalog" | tail -1)
 chmod -R a+rX "$T"
 TOKEN=$(printf 's%.0s' {1..32})
