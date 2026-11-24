@@ -21,7 +21,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: bmi-server
-          image: bmi-server:fcb11d6
+          image: bmi-server:85be35b
           imagePullPolicy: IfNotPresent
           ports:
             - {name: http, containerPort: 8080}
