@@ -1,6 +1,9 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use regex::Regex;
 use serde::Serialize;
 use std::fs;
+use std::path::Path;
+use std::sync::LazyLock;
 use std::time::Duration;
 use sysinfo::System;
 
@@ -23,6 +26,109 @@ struct ReportPayload<'a> {
     log_filename: String,
 }
 
+static UNIX_ACCOUNT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(/Users/|/home/)[^/\s<]+").expect("static regex"));
+static WINDOWS_ACCOUNT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)([a-z]:\\Users\\)[^\\\r\n<]+").expect("static regex"));
+static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+        .expect("static regex")
+});
+static IPV4: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b(?:\d{1,3}\.){3}\d{1,3}\b").expect("static regex"));
+
+/// Remove personal data from a log before it leaves the machine: the home directory becomes `~`,
+/// account names in user-profile paths become `<user>`, e-mail addresses `<email>`, IPv4
+/// addresses `<ip>`. Idempotent. Deliberately errs on the side of over-redaction (a mod id whose
+/// name contains a dot, or a four-part version number, is also replaced).
+pub fn redact(text: &str, home: Option<&Path>) -> String {
+    let mut out = text.to_string();
+    if let Some(home) = home {
+        let h = home.to_string_lossy().to_string();
+        if h.len() > 3 {
+            out = out.replace(&h, "~");
+            // Logs sometimes carry the same path with the other separator.
+            let flipped = if h.contains('\\') {
+                h.replace('\\', "/")
+            } else {
+                h.replace('/', "\\")
+            };
+            out = out.replace(&flipped, "~");
+        }
+    }
+    let out = UNIX_ACCOUNT.replace_all(&out, "${1}<user>");
+    let out = WINDOWS_ACCOUNT.replace_all(&out, "${1}<user>");
+    let out = EMAIL.replace_all(&out, "<email>");
+    IPV4.replace_all(&out, "<ip>").into_owned()
+}
+
+/// Redact first, then keep the newest `max_bytes`, so a secret straddling the cut is never
+/// half-visible.
+pub fn prepare_log(raw: &str, home: Option<&Path>, max_bytes: usize) -> String {
+    tail_str(&redact(raw, home), max_bytes).to_string()
+}
+
+struct Collected {
+    os: String,
+    arch: String,
+    cpu: String,
+    gpu: String,
+    ram: String,
+    log_filename: String,
+    log: String,
+}
+
+fn collect() -> Collected {
+    let (cpu, ram) = get_cpu_and_ram();
+    let os = std::env::consts::OS.to_string();
+    let os_version = detect_os_version().unwrap_or_else(|| "Unknown".to_string());
+    let os = if os_version == "Unknown" {
+        os
+    } else {
+        format!("{os} | {os_version}")
+    };
+    let (log_filename, raw) =
+        latest_log().unwrap_or_else(|| ("bmm.log".to_string(), String::from("No logs found.")));
+    Collected {
+        os,
+        arch: std::env::consts::ARCH.to_string(),
+        cpu,
+        gpu: detect_gpu().unwrap_or_else(|| "Unknown".to_string()),
+        ram,
+        log_filename,
+        log: prepare_log(&raw, dirs::home_dir().as_deref(), MAX_LOG_BYTES),
+    }
+}
+
+#[derive(Serialize)]
+pub struct ReportPreview {
+    pub os: String,
+    pub arch: String,
+    pub cpu: String,
+    pub gpu: String,
+    pub ram: String,
+    pub log_filename: String,
+    pub log: String,
+    pub log_bytes: usize,
+}
+
+/// Exactly what `submit_report` will send (apart from the title, description and app version the
+/// user typed), so the UI can show it before the user consents.
+#[tauri::command]
+pub async fn preview_report() -> Result<ReportPreview, String> {
+    let c = collect();
+    Ok(ReportPreview {
+        log_bytes: c.log.len(),
+        os: c.os,
+        arch: c.arch,
+        cpu: c.cpu,
+        gpu: c.gpu,
+        ram: c.ram,
+        log_filename: c.log_filename,
+        log: c.log,
+    })
+}
+
 /// Submit an issue report to the BMI backend (`POST {BMI_SERVER_URL}/report`).
 #[tauri::command]
 pub async fn submit_report(
@@ -30,34 +136,20 @@ pub async fn submit_report(
     description: String,
     mm_version: String,
 ) -> Result<(), String> {
-    // Collect system info
-    let (cpu, ram_str) = get_cpu_and_ram();
-    let os = std::env::consts::OS.to_string();
-    let os_version = detect_os_version().unwrap_or_else(|| "Unknown".to_string());
-    let os_combined = if os_version == "Unknown" {
-        os.clone()
-    } else {
-        format!("{} | {}", os, os_version)
-    };
-    let arch = std::env::consts::ARCH.to_string();
-    let gpu = detect_gpu().unwrap_or_else(|| "Unknown".to_string());
-
-    // Get latest log
-    let (log_filename, log_text) =
-        latest_log().unwrap_or_else(|| ("bmm.log".to_string(), String::from("No logs found.")));
-    let log_b64 = STANDARD.encode(tail_str(&log_text, MAX_LOG_BYTES).as_bytes());
+    let c = collect();
+    let log_b64 = STANDARD.encode(c.log.as_bytes());
 
     let payload = ReportPayload {
         title: &title,
         description: &description,
         mm_version: &mm_version,
-        os: os_combined,
-        arch,
-        cpu,
-        gpu,
-        ram: ram_str,
+        os: c.os,
+        arch: c.arch,
+        cpu: c.cpu,
+        gpu: c.gpu,
+        ram: c.ram,
         log_b64,
-        log_filename,
+        log_filename: c.log_filename,
     };
 
     // Send with timeout to avoid hanging indefinitely
@@ -587,5 +679,104 @@ mod tests {
     fn test_detect_gpu_returns_option() {
         // Just verify it doesn't panic
         let _gpu = detect_gpu();
+    }
+}
+
+#[cfg(test)]
+mod redact_tests {
+    use super::*;
+
+    fn r(t: &str) -> String {
+        redact(t, None)
+    }
+
+    #[test]
+    fn account_names_in_profile_paths_are_replaced() {
+        assert_eq!(
+            r("/Users/kh/Library/Application Support/Balatro/mods"),
+            "/Users/<user>/Library/Application Support/Balatro/mods"
+        );
+        assert_eq!(
+            r(r"C:\Users\Jane Doe\AppData\Roaming\Balatro"),
+            r"C:\Users\<user>\AppData\Roaming\Balatro"
+        );
+        assert_eq!(
+            r("/home/jane/.config/Balatro"),
+            "/home/<user>/.config/Balatro"
+        );
+    }
+
+    #[test]
+    fn home_directory_becomes_tilde() {
+        assert_eq!(
+            redact("opened /Users/kh/x", Some(Path::new("/Users/kh"))),
+            "opened ~/x"
+        );
+        assert_eq!(
+            redact(r"opened C:\Users\kh\x", Some(Path::new(r"C:\Users\kh"))),
+            r"opened ~\x"
+        );
+    }
+
+    #[test]
+    fn emails_and_ips_are_replaced() {
+        assert_eq!(
+            r("contact a.b+c@example.com from 192.168.1.20 and 8.8.8.8"),
+            "contact <email> from <ip> and <ip>"
+        );
+        assert_eq!(r("version 1.2.3.4"), "version <ip>"); // accepted over-redaction
+    }
+
+    #[test]
+    fn versions_dates_and_ordinary_lines_are_untouched() {
+        for t in [
+            "0.4.1",
+            "2026-11-15",
+            "Mod details fetch: title='Foo' id='a@Foo'",
+        ] {
+            assert_eq!(r(t), t);
+        }
+        // accepted over-redaction: a mod name containing a dot looks like an e-mail address
+        assert_eq!(r("id='x@Mod.Pack'"), "id='<email>'");
+    }
+
+    #[test]
+    fn redaction_is_idempotent() {
+        let t = "/Users/kh/x jane@example.com 10.0.0.1 C:\\Users\\Jo\\y";
+        assert_eq!(r(&r(t)), r(t));
+    }
+
+    #[test]
+    fn username_straddling_the_truncation_boundary_never_survives() {
+        let line = "/Users/secretname/Library/x\n";
+        let mut raw = "x".repeat(1000);
+        raw.push_str(line);
+        raw.push_str(&"y".repeat(500));
+        for cut in (0..line.len() + 40).step_by(1) {
+            let max = 500 + line.len() - cut.min(line.len());
+            let out = prepare_log(&raw, None, max.max(1));
+            assert!(!out.contains("secretname"), "cut {cut}: {out:?}");
+            assert!(!out.contains("secret"), "cut {cut}");
+        }
+        let big = format!("{}{line}{}", "a".repeat(250_000), "b".repeat(250_000));
+        assert!(!prepare_log(&big, None, MAX_LOG_BYTES).contains("secretname"));
+    }
+
+    #[test]
+    fn tail_str_cuts_on_char_boundaries() {
+        assert_eq!(tail_str("héllo", 3), "llo");
+        assert_eq!(tail_str("abc", 10), "abc");
+    }
+}
+
+#[cfg(test)]
+mod registration_tests {
+    /// The UI calls `preview_report`; a command that is not in `invoke_handler!` fails at runtime
+    /// only, so pin the registration in a test.
+    #[test]
+    fn preview_report_is_registered_in_the_invoke_handler() {
+        let lib = include_str!("../lib.rs");
+        assert!(lib.contains("commands::report::preview_report,"));
+        assert!(lib.contains("commands::report::submit_report,"));
     }
 }

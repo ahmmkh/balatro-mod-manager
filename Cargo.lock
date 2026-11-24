@@ -420,6 +420,7 @@ dependencies = [
  "open",
  "predicates",
  "rayon",
+ "regex",
  "reqwest",
  "scopeguard",
  "serde",
