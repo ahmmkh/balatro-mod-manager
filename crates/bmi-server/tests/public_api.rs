@@ -431,3 +431,33 @@ async fn report_log_is_gzipped_and_roundtrips() {
     assert_eq!(bytes as usize, log.len());
     assert!(gz.len() < 20_000, "gz is {}", gz.len());
 }
+
+#[tokio::test]
+async fn thumbnails_and_catalog_reads_have_separate_rate_limits() {
+    let f = fx();
+    let _d = f.load(&std_mods(), &["a@Alpha"]);
+    assert_eq!(get(&f.app, "/mods").await.status, 200);
+    let mut ok = 0;
+    for _ in 0..200 {
+        if get(&f.app, "/thumbnails/a%40Alpha.webp").await.status == 200 {
+            ok += 1;
+        }
+    }
+    assert_eq!(
+        ok, 200,
+        "thumbnails must not draw on the catalog read bucket"
+    );
+}
+
+#[tokio::test]
+async fn ipv6_addresses_in_one_slash_64_share_a_client_identity() {
+    let f = fx();
+    let _d = f.load(&std_mods(), &[]);
+    for i in 0..3 {
+        let ip = format!("2001:db8:1:2::{i:x}");
+        post(&f.app, "/mods/a%40Alpha/download", &ip, "").await;
+    }
+    assert_eq!(f.st.downloads.get("a@Alpha").total, 1);
+    post(&f.app, "/mods/a%40Alpha/download", "2001:db8:1:3::1", "").await;
+    assert_eq!(f.st.downloads.get("a@Alpha").total, 2);
+}

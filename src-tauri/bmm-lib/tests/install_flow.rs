@@ -243,6 +243,20 @@ fn names_illegal_on_windows_are_rejected_on_every_os() {
 }
 
 #[test]
+fn backslash_names_are_rejected_on_every_os() {
+    for z in [
+        vec![("main.lua", &b"x"[..]), ("lovely\\patch.toml", b"x")],
+        vec![("Mod\\main.lua", b"x"), ("Mod\\lovely\\patch.toml", b"x")],
+        vec![("main.lua", b"x"), ("__MACOSX\\junk", b"x")],
+    ] {
+        let sb = Sandbox::new();
+        let err = install(&sb, make_zip(&z), Some("Back")).expect_err("backslash");
+        assert!(matches!(err, AppError::PathValidation { .. }), "{err:?}");
+        assert!(!sb.mods().join("Back").exists());
+    }
+}
+
+#[test]
 fn case_collisions_are_rejected_on_every_os() {
     let sb = Sandbox::new();
     let z = make_zip(&[("Foo.lua", b"1"), ("foo.lua", b"2")]);

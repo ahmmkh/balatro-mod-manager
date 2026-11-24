@@ -7,6 +7,8 @@ use parking_lot::RwLock;
 use reqwest::Url;
 use reqwest::redirect::Policy;
 use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub const DEAD_AFTER_FAILS: i64 = 3;
@@ -43,6 +45,9 @@ impl ReqwestFetch {
         });
         Ok(Self(
             reqwest::Client::builder()
+                // Checks the address a name actually resolves to (covers redirects and DNS
+                // rebinding), not just the text of the URL.
+                .dns_resolver(Arc::new(PublicOnlyResolver))
                 .timeout(TIMEOUT)
                 .redirect(policy)
                 .user_agent("bmi-link-check")
@@ -72,28 +77,79 @@ impl Fetch for ReqwestFetch {
     }
 }
 
-/// Only public https URLs.
+/// Whether an address is globally routable (not loopback, private, link-local, CGNAT,
+/// benchmarking, documentation, multicast, reserved, unique-local ...).
+pub fn is_global_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v) => is_global_v4(v),
+        IpAddr::V6(v) => match v.to_ipv4_mapped() {
+            Some(m) => is_global_v4(m),
+            None => is_global_v6(v),
+        },
+    }
+}
+
+fn is_global_v4(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    !(ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_broadcast()
+        || ip.is_multicast()
+        || a == 0
+        || (a == 100 && (64..128).contains(&b)) // 100.64/10 CGNAT (also Tailscale)
+        || (a == 192 && b == 0 && c == 0) // 192.0.0/24
+        || (a == 192 && b == 0 && c == 2)
+        || (a == 198 && (b == 18 || b == 19)) // 198.18/15 benchmarking
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+        || a >= 240)
+}
+
+fn is_global_v6(ip: Ipv6Addr) -> bool {
+    let s = ip.segments();
+    // Global unicast is 2000::/3; exclude the documentation range 2001:db8::/32.
+    (s[0] & 0xe000) == 0x2000 && !(s[0] == 0x2001 && s[1] == 0x0db8)
+}
+
+/// Resolves names but drops every address that is not globally routable; fails when none is left.
+struct PublicOnlyResolver;
+
+impl reqwest::dns::Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((name.as_str(), 0))
+                .await?
+                .filter(|a| is_global_ip(a.ip()))
+                .collect();
+            if addrs.is_empty() {
+                return Err("name resolves only to non-public addresses".into());
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// Only public https URLs on the default port.
 pub fn is_safe_url(raw: &str) -> bool {
     let Ok(u) = Url::parse(raw) else { return false };
-    if u.scheme() != "https" {
+    if u.scheme() != "https" || u.port().is_some_and(|p| p != 443) {
         return false;
     }
     match u.host() {
         Some(url::Host::Domain(d)) => {
-            let d = d.to_ascii_lowercase();
-            !(d == "localhost"
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            !(d.is_empty()
+                || d == "localhost"
                 || d.ends_with(".local")
                 || d.ends_with(".internal")
-                || d.ends_with(".localhost"))
+                || d.ends_with(".localhost")
+                || !d.contains('.'))
         }
-        Some(url::Host::Ipv4(ip)) => {
-            !(ip.is_loopback()
-                || ip.is_private()
-                || ip.is_link_local()
-                || ip.is_unspecified()
-                || ip.octets()[0] == 0)
-        }
-        Some(url::Host::Ipv6(_)) | None => false,
+        Some(url::Host::Ipv4(ip)) => is_global_v4(ip),
+        Some(url::Host::Ipv6(ip)) => is_global_ip(IpAddr::V6(ip)),
+        None => false,
     }
 }
 

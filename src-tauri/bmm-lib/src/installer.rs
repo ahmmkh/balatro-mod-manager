@@ -370,7 +370,15 @@ fn unsafe_entry(name: &str, reason: &str) -> AppError {
 /// supported OS. The same rules apply on Windows, macOS and Linux, so a mod never installs on one
 /// and silently breaks on another.
 pub(crate) fn validate_entry_name(name: &str) -> Result<(), AppError> {
-    let n = name.replace('\\', "/");
+    // `\` is a separator on Windows only; extraction on macOS/Linux would create files with a
+    // literal backslash in their name. Reject it everywhere so installs behave the same.
+    if name.contains('\\') {
+        return Err(unsafe_entry(
+            name,
+            "backslash in an archive entry name (illegal on Windows, ambiguous elsewhere)",
+        ));
+    }
+    let n = name.to_string();
     if n.starts_with('/') {
         return Err(unsafe_entry(name, "absolute path"));
     }
@@ -416,8 +424,8 @@ pub(crate) fn validate_archive_entries<'a>(
     // lowercase path prefix -> the spelling first seen
     let mut spellings: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for name in entries {
-        if name.starts_with("__MACOSX/") || name.starts_with("__MACOSX\\") {
-            continue; // skipped at extraction time as well
+        if name.starts_with("__MACOSX/") {
+            continue; // skipped at extraction time as well (and only this spelling is skipped)
         }
         validate_entry_name(name)?;
         let n = name.replace('\\', "/");

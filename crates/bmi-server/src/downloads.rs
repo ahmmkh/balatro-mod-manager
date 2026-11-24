@@ -90,13 +90,16 @@ impl DownloadCounter {
 
     /// Returns true if this call was counted (false = same visitor already counted today).
     pub fn record(&self, mod_id: &str, ip: &str) -> bool {
-        let day = (self.today)();
-        let key = self.hash(&[&day, ip, mod_id]);
         let mut g = self.inner.lock();
-        if g.seen_day != day {
+        // Read the clock under the lock and only ever move the day forward: a request that raced
+        // past midnight (or a clock stepped back) must not clear today's de-dupe set.
+        let day = (self.today)();
+        if day > g.seen_day {
             g.seen.clear(); // keys embed the day, so yesterday's can never match again
             g.seen_day = day.clone();
         }
+        let day = g.seen_day.clone();
+        let key = self.hash(&[&day, ip, mod_id]);
         if !g.seen.insert(key.clone()) {
             return false;
         }

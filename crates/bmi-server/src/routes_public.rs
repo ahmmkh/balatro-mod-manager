@@ -227,7 +227,7 @@ async fn thumbnail(
     Path(file): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if limited(&st, &ip, "read", 600.0, 600.0) {
+    if limited(&st, &ip, "thumb", 600.0, 600.0) {
         return rate_limited();
     }
     let dir = st.store.read().dir();

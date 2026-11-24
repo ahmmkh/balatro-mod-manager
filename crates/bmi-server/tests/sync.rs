@@ -28,7 +28,11 @@ out = pathlib.Path(sys.argv[sys.argv.index("--out") + 1])
 mods = []
 for d in sorted(pathlib.Path("mods").iterdir()):
     meta = json.loads((d / "meta.json").read_text())
-    mods.append({"id": d.name, "name": meta["title"], "updated_at": "1", "description": "", "meta": meta})
+    desc = (d / "description.md")
+    description = desc.read_text() if desc.exists() else ""
+    import os
+    description += os.environ.get("BMI_TEST_SECRET", "")
+    mods.append({"id": d.name, "name": meta["title"], "updated_at": "1", "description": description, "meta": meta})
 (out / "index.json").write_text(json.dumps({"mods": mods}))
 "#;
 
@@ -199,4 +203,96 @@ fn prune_shrinks_the_reports_file() {
     let before = size();
     assert_eq!(prune_reports(&f.st.reports, T0).unwrap(), 40);
     assert!(size() < before / 2, "before {before}, after {}", size());
+}
+
+fn build_dirs(catalog: &Path) -> usize {
+    std::fs::read_dir(catalog)
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with("build-"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+#[tokio::test]
+async fn a_build_with_no_usable_mods_is_never_published_and_is_cleaned_up() {
+    let repo = make_repo(&["a@A"]);
+    let (f, sync) = synced_fx(repo.path());
+    assert!(sync.sync_once(false).await.changed);
+    let before = build_dirs(&f.st.cfg.catalog_dir);
+    // a build whose index.json contains only an invalid entry
+    std::fs::write(
+        repo.path().join("scripts/build_index.py"),
+        r#"
+import sys, pathlib, json
+out = pathlib.Path(sys.argv[sys.argv.index("--out") + 1]); (out / "thumbnails").mkdir(parents=True)
+(out / "index.json").write_text(json.dumps({"mods": [{"bad": 1}]}))
+"#,
+    )
+    .unwrap();
+    sh(repo.path(), "git", &["commit", "-qam", "bad build"]);
+    assert!(!sync.sync_once(false).await.changed);
+    assert!(sync.status().last_error.is_some());
+    assert_eq!(
+        build_dirs(&f.st.cfg.catalog_dir),
+        before,
+        "failed build directory removed"
+    );
+    // retrying the same HEAD does not rebuild
+    let _ = sync.sync_once(false).await;
+    assert_eq!(build_dirs(&f.st.cfg.catalog_dir), before);
+    // a restart still finds the last good catalog
+    let fresh = AppState::build((*f.st.cfg).clone(), f.st.now.clone()).unwrap();
+    let again = IndexSync::new((*fresh.cfg).clone(), fresh.store.clone());
+    assert!(again.load_from_disk().is_some());
+    assert!(fresh.store.read().ready());
+}
+
+#[tokio::test]
+async fn one_malformed_entry_is_skipped_not_fatal() {
+    let repo = make_repo(&["a@A", "b@B"]);
+    std::fs::write(repo.path().join("mods/b@B/meta.json"), r#"{"title": 1}"#).unwrap();
+    sh(repo.path(), "git", &["commit", "-qam", "title is a number"]);
+    let (f, sync) = synced_fx(repo.path());
+    assert!(sync.sync_once(false).await.changed, "{:?}", sync.status());
+    assert_eq!(f.st.store.read().mods().len(), 1);
+}
+
+#[tokio::test]
+async fn the_build_script_does_not_see_server_secrets() {
+    // SAFETY: unique variable name, only read by the child script below.
+    unsafe { std::env::set_var("BMI_TEST_SECRET", "s3cr3t-token") };
+    let repo = make_repo(&["a@A"]);
+    let (f, sync) = synced_fx(repo.path());
+    assert!(sync.sync_once(false).await.changed, "{:?}", sync.status());
+    let m = f.st.store.read().get("a@A").unwrap();
+    assert!(
+        !m.description.contains("s3cr3t"),
+        "child inherited the environment: {:?}",
+        m.description
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinks_in_the_index_repo_do_not_expose_host_files() {
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("secret.txt"), "TOP-SECRET-CONTENT").unwrap();
+    let repo = make_repo(&["a@A"]);
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.txt"),
+        repo.path().join("mods/a@A/description.md"),
+    )
+    .unwrap();
+    sh(repo.path(), "git", &["add", "-A"]);
+    sh(
+        repo.path(),
+        "git",
+        &["commit", "-qm", "symlinked description"],
+    );
+    let (f, sync) = synced_fx(repo.path());
+    assert!(sync.sync_once(false).await.changed, "{:?}", sync.status());
+    let m = f.st.store.read().get("a@A").unwrap();
+    assert!(!m.description.contains("TOP-SECRET"), "{:?}", m.description);
 }

@@ -217,6 +217,7 @@ async fn ban(State(st): State<AppState>, body: axum::body::Bytes) -> Response {
     let Some(ip) = ip else {
         return json_error(StatusCode::BAD_REQUEST, "ip required");
     };
+    let ip = crate::app::normalize_ip(&ip);
     let hash = st.downloads.hash(&["ban", &ip]);
     {
         let conn = st.db.lock().unwrap_or_else(|e| e.into_inner());

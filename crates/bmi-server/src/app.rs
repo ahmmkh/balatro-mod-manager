@@ -100,6 +100,22 @@ impl AppState {
 #[derive(Clone, Debug)]
 pub struct ClientIp(pub String);
 
+/// Collapse an IPv6 address to its /64 so one host rotating addresses inside its prefix shares one
+/// rate-limit bucket, one de-dupe identity and one ban. IPv4 and anything unparsable pass through.
+pub fn normalize_ip(raw: &str) -> String {
+    match raw.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V6(v6)) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => {
+                let seg = v6.segments();
+                format!("{:x}:{:x}:{:x}:{:x}::/64", seg[0], seg[1], seg[2], seg[3])
+            }
+        },
+        Ok(std::net::IpAddr::V4(v4)) => v4.to_string(),
+        Err(_) => raw.to_string(),
+    }
+}
+
 /// `cf-connecting-ip`, then the first `x-forwarded-for`, only when `trust_proxy`; otherwise the
 /// socket address, else `"unknown"`.
 pub fn client_ip(cfg: &Config, headers: &HeaderMap, peer: Option<SocketAddr>) -> String {
@@ -109,7 +125,7 @@ pub fn client_ip(cfg: &Config, headers: &HeaderMap, peer: Option<SocketAddr>) ->
             .and_then(|v| v.to_str().ok())
             .map(str::trim);
         if let Some(v) = cf.filter(|v| !v.is_empty()) {
-            return v.to_string();
+            return normalize_ip(v);
         }
         let xff = headers
             .get("x-forwarded-for")
@@ -117,10 +133,10 @@ pub fn client_ip(cfg: &Config, headers: &HeaderMap, peer: Option<SocketAddr>) ->
             .and_then(|v| v.split(',').next())
             .map(str::trim);
         if let Some(v) = xff.filter(|v| !v.is_empty()) {
-            return v.to_string();
+            return normalize_ip(v);
         }
     }
-    peer.map_or_else(|| "unknown".into(), |p| p.ip().to_string())
+    peer.map_or_else(|| "unknown".into(), |p| normalize_ip(&p.ip().to_string()))
 }
 
 /// Strong ETag: hex of SHA-256 truncated to 16 bytes, quoted.

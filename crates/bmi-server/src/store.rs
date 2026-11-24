@@ -31,8 +31,13 @@ struct StateRow {
     hidden: bool,
 }
 
+/// Entries are parsed one by one so a single malformed mod cannot reject the whole catalog.
 #[derive(Deserialize)]
 struct IndexFile {
+    mods: Vec<serde_json::Value>,
+}
+
+struct ParsedIndex {
     mods: Vec<CatalogMod>,
 }
 
@@ -89,10 +94,20 @@ impl Store {
     pub fn load(&mut self, dir: &Path, now: i64) -> Result<LoadStats> {
         let raw = std::fs::read_to_string(dir.join("index.json"))
             .with_context(|| format!("reading {}/index.json", dir.display()))?;
-        let parsed: IndexFile = serde_json::from_str(&raw).context("parsing index.json")?;
-        if parsed.mods.is_empty() {
-            bail!("index.json has no mods");
+        let file: IndexFile = serde_json::from_str(&raw).context("parsing index.json")?;
+        let mut parsed_mods: Vec<CatalogMod> = Vec::with_capacity(file.mods.len());
+        for (i, v) in file.mods.into_iter().enumerate() {
+            match serde_json::from_value::<CatalogMod>(v) {
+                Ok(m) => parsed_mods.push(m),
+                Err(e) => {
+                    tracing::warn!(event = "skipping_bad_catalog_entry", index = i, error = %e)
+                }
+            }
         }
+        if parsed_mods.is_empty() {
+            bail!("index.json has no usable mods");
+        }
+        let parsed = ParsedIndex { mods: parsed_mods };
 
         let mut conn = self.db.lock().unwrap_or_else(|e| e.into_inner());
         let mut state: HashMap<String, StateRow> = HashMap::new();
@@ -164,7 +179,18 @@ impl Store {
         }
         tx.commit()?;
         let tombstones = Self::read_tombstones(&conn)?;
+        // Dead-link flags must survive reloads (hide/unhide, every sync): re-derive them here.
+        let dead: HashSet<String> = conn
+            .prepare("SELECT mod_id FROM link_health WHERE fails >= ?1")
+            .and_then(|mut st| {
+                st.query_map([crate::links::DEAD_AFTER_FAILS], |r| r.get::<_, String>(0))?
+                    .collect()
+            })
+            .unwrap_or_default();
         drop(conn);
+        for m in &mut visible {
+            m.unavailable = dead.contains(&m.id);
+        }
 
         self.by_id = visible
             .iter()

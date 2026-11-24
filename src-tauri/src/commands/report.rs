@@ -27,9 +27,13 @@ struct ReportPayload<'a> {
 }
 
 static UNIX_ACCOUNT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(/Users/|/home/)[^/\s<]+").expect("static regex"));
-static WINDOWS_ACCOUNT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)([a-z]:\\Users\\)[^\\\r\n<]+").expect("static regex"));
+    LazyLock::new(|| Regex::new(r#"(?i)(/users/|/home/)[^/\\"\s<]+"#).expect("static regex"));
+/// `C:\Users\x`, `C:/Users/x` and the doubled form `C:\\Users\\x` that `{:?}` formatting of a path
+/// puts in the log, in any case.
+static WINDOWS_ACCOUNT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\b([a-z]:(?:\\\\|\\|/)users(?:\\\\|\\|/))[^\\/"\r\n<]+"#)
+        .expect("static regex")
+});
 static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
         .expect("static regex")
@@ -46,14 +50,18 @@ pub fn redact(text: &str, home: Option<&Path>) -> String {
     if let Some(home) = home {
         let h = home.to_string_lossy().to_string();
         if h.len() > 3 {
-            out = out.replace(&h, "~");
-            // Logs sometimes carry the same path with the other separator.
-            let flipped = if h.contains('\\') {
-                h.replace('\\', "/")
-            } else {
-                h.replace('/', "\\")
-            };
-            out = out.replace(&flipped, "~");
+            // The home path as written, with the other separator, and as it appears when a path is
+            // Debug-formatted (backslashes doubled). Case-insensitive, and only at a path boundary
+            // so `/home/al` does not eat the start of `/home/alice`.
+            let mut variants = vec![h.clone(), h.replace('\\', "/"), h.replace('/', "\\")];
+            variants.push(variants[2].replace('\\', "\\\\"));
+            variants.sort();
+            variants.dedup();
+            let alt: Vec<String> = variants.iter().map(|v| regex::escape(v)).collect();
+            if let Ok(re) = Regex::new(&format!(r#"(?i)(?:{})(?P<next>[/\\"\s]|$)"#, alt.join("|")))
+            {
+                out = re.replace_all(&out, "~${next}").into_owned();
+            }
         }
     }
     let out = UNIX_ACCOUNT.replace_all(&out, "${1}<user>");
@@ -707,6 +715,46 @@ mod redact_tests {
         assert_eq!(
             r("/home/jane/.config/Balatro"),
             "/home/<user>/.config/Balatro"
+        );
+    }
+
+    #[test]
+    fn debug_formatted_windows_paths_are_redacted() {
+        // `{:?}` of a PathBuf doubles the backslashes; this is how the app logs most paths.
+        let line = r#"Scanning for manual mods in: "C:\\Users\\Jane Doe\\AppData\\Roaming\\Balatro\\Mods""#;
+        for home in [None, Some(Path::new(r"C:\Users\Jane Doe"))] {
+            let out = redact(line, home);
+            assert!(
+                !out.contains("Jane") && !out.contains("Doe"),
+                "{home:?}: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_windows_spellings_and_case_are_redacted() {
+        for t in [
+            "c:/users/jane doe/x",
+            "C:/Users/Jane Doe/x",
+            r"c:\USERS\Jane Doe\x",
+            "/USERS/jane/x",
+            "/Home/jane/x",
+        ] {
+            let out = redact(t, None);
+            assert!(!out.to_lowercase().contains("jane"), "{t} -> {out}");
+        }
+    }
+
+    #[test]
+    fn home_replacement_respects_path_boundaries() {
+        assert_eq!(
+            redact("/home/alice/x", Some(Path::new("/home/al"))),
+            "/home/<user>/x"
+        );
+        assert_eq!(redact("/home/al/x", Some(Path::new("/home/al"))), "~/x");
+        assert_eq!(
+            redact(r"C:\\Users\\Jo\\x", Some(Path::new(r"C:\Users\Jo"))),
+            r"~\\x"
         );
     }
 

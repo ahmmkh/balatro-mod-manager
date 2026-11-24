@@ -1,6 +1,6 @@
 mod common;
 use async_trait::async_trait;
-use bmi_server::links::{Fetch, check_all, is_safe_url, probe};
+use bmi_server::links::{Fetch, check_all, is_global_ip, is_safe_url, probe};
 use common::*;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -100,4 +100,60 @@ async fn unavailable_only_after_three_failures_and_recovers() {
     fetch.0.store(true, Ordering::SeqCst);
     check_all(&f.st.db, &f.st.store, &fetch, 6).await;
     assert!(!f.st.store.read().get("a@Alpha").unwrap().unavailable);
+}
+
+#[tokio::test]
+async fn unavailable_flags_survive_a_catalog_reload() {
+    let f = fx();
+    let _d = f.load(&std_mods()[..2], &[]);
+    let fetch = ByUrl(AtomicBool::new(false));
+    for _ in 0..3 {
+        check_all(&f.st.db, &f.st.store, &fetch, 6).await;
+    }
+    assert!(f.st.store.read().get("a@Alpha").unwrap().unavailable);
+    assert!(f.st.store.write().set_hidden("b@Beta", true, 5000)); // triggers a reload
+    assert!(
+        f.st.store.read().get("a@Alpha").unwrap().unavailable,
+        "flag lost by reload"
+    );
+}
+
+#[test]
+fn ssrf_guard_rejects_trailing_dot_cgnat_benchmark_and_odd_ports() {
+    for u in [
+        "https://localhost./",
+        "https://foo.localhost./",
+        "https://100.64.0.1/x",
+        "https://100.100.100.100/x",
+        "https://198.18.0.1/x",
+        "https://[fd00::1]/x",
+        "https://[::ffff:127.0.0.1]/x",
+        "https://example.com:8443/x",
+        "https://intranet/x",
+    ] {
+        assert!(!is_safe_url(u), "{u}");
+    }
+    assert!(is_safe_url("https://github.com:443/x"));
+    assert!(is_safe_url("https://[2606:4700::1111]/x"));
+}
+
+#[test]
+fn global_ip_classification() {
+    for (ip, want) in [
+        ("8.8.8.8", true),
+        ("1.1.1.1", true),
+        ("127.0.0.1", false),
+        ("10.1.2.3", false),
+        ("172.31.0.1", false),
+        ("169.254.169.254", false),
+        ("100.127.255.255", false),
+        ("100.128.0.1", true),
+        ("224.0.0.1", false),
+        ("2606:4700::1111", true),
+        ("::1", false),
+        ("fe80::1", false),
+        ("2001:db8::1", false),
+    ] {
+        assert_eq!(is_global_ip(ip.parse().unwrap()), want, "{ip}");
+    }
 }

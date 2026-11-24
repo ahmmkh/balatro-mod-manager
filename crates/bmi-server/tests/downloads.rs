@@ -132,3 +132,19 @@ fn hash_depends_on_secret_and_parts() {
     assert_ne!(c.hash(&["a", "b"]), c.hash(&["ab"]));
     assert_eq!(c.hash(&["x"]).len(), 64);
 }
+
+#[test]
+fn a_late_request_across_midnight_does_not_reset_dedupe() {
+    let f = fx();
+    let c = counter(&f);
+    assert!(c.record("a@Alpha", "1.1.1.1"));
+    *f.day.lock().unwrap() = "2026-11-16".into();
+    assert!(c.record("a@Alpha", "2.2.2.2"));
+    *f.day.lock().unwrap() = "2026-11-15".into(); // stale clock reading / clock stepped back
+    c.record("a@Alpha", "3.3.3.3");
+    *f.day.lock().unwrap() = "2026-11-16".into();
+    assert!(
+        !c.record("a@Alpha", "2.2.2.2"),
+        "same visitor must not count twice"
+    );
+}
