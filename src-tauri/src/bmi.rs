@@ -8,12 +8,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::models::{ModDownloads, ModMeta};
 
-/// Base URL of the BMI API (the Cloudflare Worker in the `Balatro-Mod-Index` repo's `worker/`).
-/// Override at runtime with the `BMI_SERVER_URL` environment variable (e.g. for local development
-/// against `wrangler dev`).
-/// `.invalid` can never resolve (RFC 2606), so an unconfigured build fails closed instead of
-/// trusting whoever might later register a placeholder hostname. Replace after deploying the Worker.
-pub const DEFAULT_BMI_SERVER_URL: &str = "https://bmi-api.invalid";
+/// Base URL of the BMI API: the `bmi-server` crate in this workspace, deployed on kh-kube behind a
+/// Cloudflare Tunnel (see `docs/maintaining.md`). Override at runtime with the `BMI_SERVER_URL`
+/// environment variable, e.g. to test against a local server.
+pub const DEFAULT_BMI_SERVER_URL: &str = "https://bmi.khatab.me";
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RETRIES: u32 = 3;
