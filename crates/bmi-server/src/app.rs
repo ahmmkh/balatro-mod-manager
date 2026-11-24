@@ -70,6 +70,7 @@ impl AppState {
         let n = now.clone();
         let today: Today = Arc::new(move || utc_day_of(n()));
         let downloads = Arc::new(DownloadCounter::new(db.clone(), secret, today)?);
+        let multiplier = cfg.rate_limit_multiplier;
         let banned: HashSet<String> = {
             let c = db.lock().unwrap_or_else(|e| e.into_inner());
             let mut st = c.prepare("SELECT hash FROM banned")?;
@@ -82,7 +83,7 @@ impl AppState {
             db,
             reports,
             downloads,
-            limiter: Arc::new(RateLimiter::default()),
+            limiter: Arc::new(RateLimiter::default().with_multiplier(multiplier)),
             sync: None,
             counters: Arc::new(Counters::default()),
             http: reqwest::Client::builder()

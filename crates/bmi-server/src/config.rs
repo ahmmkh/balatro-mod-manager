@@ -21,6 +21,8 @@ pub struct Config {
     pub discord_webhook_url: Option<String>,
     pub reports_per_day: u64,
     pub reports_max_bytes: u64,
+    /// Scales all per-IP rate limits. Load testing only; leave unset in production.
+    pub rate_limit_multiplier: f64,
 }
 
 impl Config {
@@ -59,6 +61,9 @@ impl Config {
             discord_webhook_url: get("DISCORD_WEBHOOK_URL").map(str::to_string),
             reports_per_day: int("REPORTS_PER_DAY", 300),
             reports_max_bytes: int("REPORTS_MAX_BYTES", 1 << 30),
+            rate_limit_multiplier: get("RATE_LIMIT_MULTIPLIER")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1.0),
             data_dir,
         })
     }

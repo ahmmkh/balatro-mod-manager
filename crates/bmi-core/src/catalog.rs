@@ -75,10 +75,27 @@ fn updated(m: &CatalogMod) -> i64 {
     m.updated_at.parse().unwrap_or(0)
 }
 
+/// ASCII punctuation in CLDR root collation order (what `Intl.Collator("en")` gives the clients
+/// and the TypeScript reference): whitespace < these symbols < digits < letters.
+const PUNCT_ORDER: &str = " _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$";
+
+/// Case-insensitive sort key for one character; no allocation so sorting stays cheap.
+fn collate_key(c: char) -> (u8, u32) {
+    let l = c.to_lowercase().next().unwrap_or(c);
+    if let Some(i) = PUNCT_ORDER.find(l) {
+        (0, i as u32)
+    } else if l.is_ascii_digit() {
+        (1, l as u32)
+    } else {
+        (2, l as u32)
+    }
+}
+
 fn by_name(a: &CatalogMod, b: &CatalogMod) -> std::cmp::Ordering {
     a.name
-        .to_lowercase()
-        .cmp(&b.name.to_lowercase())
+        .chars()
+        .map(collate_key)
+        .cmp(b.name.chars().map(collate_key))
         .then_with(|| a.id.cmp(&b.id))
 }
 
@@ -195,6 +212,39 @@ mod tests {
         let v = vec![m("z@Z", "same", 1), m("a@A", "Same", 1)];
         let out = sort_mods(&v, SortMode::NameAsc, &HashMap::new());
         assert_eq!(out[0].id, "a@A");
+    }
+    #[test]
+    fn punctuation_sorts_like_icu_root_collation() {
+        let names = [
+            "Balatro+",
+            "Balatro: Blindside",
+            "Balatro-Run",
+            "2 For 1",
+            "!Boo",
+            "Zed",
+            "alpha",
+        ];
+        let v: Vec<_> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| m(&format!("i{i}@x"), n, 1))
+            .collect();
+        let out: Vec<_> = sort_mods(&v, SortMode::NameAsc, &HashMap::new())
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        assert_eq!(
+            out,
+            [
+                "!Boo",
+                "2 For 1",
+                "alpha",
+                "Balatro-Run",
+                "Balatro: Blindside",
+                "Balatro+",
+                "Zed"
+            ]
+        );
     }
     #[test]
     fn updated_sorts() {

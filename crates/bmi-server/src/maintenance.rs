@@ -11,7 +11,12 @@ pub fn prune_reports(reports: &Db, now: i64) -> Result<usize> {
         "DELETE FROM reports WHERE created_at < ?1",
         [now - REPORT_RETENTION_DAYS * 86_400],
     )?;
-    conn.execute_batch("PRAGMA incremental_vacuum;")?;
+    // incremental_vacuum frees one page per step, so it must be stepped to completion.
+    let mut vacuum = conn.prepare("PRAGMA incremental_vacuum")?;
+    let mut rows = vacuum.query([])?;
+    while rows.next()?.is_some() {}
+    drop(rows);
+    drop(vacuum);
     conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
     Ok(n)
 }

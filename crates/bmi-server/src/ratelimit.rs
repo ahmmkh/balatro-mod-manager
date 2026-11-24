@@ -13,6 +13,8 @@ struct Bucket {
 
 pub struct RateLimiter {
     now: Clock,
+    /// Scales every limit (load tests only; 1.0 in production).
+    multiplier: f64,
     buckets: Mutex<HashMap<String, Bucket>>,
 }
 
@@ -20,12 +22,19 @@ impl RateLimiter {
     pub fn new(now: Clock) -> Self {
         Self {
             now,
+            multiplier: 1.0,
             buckets: Mutex::new(HashMap::new()),
         }
     }
 
+    pub fn with_multiplier(mut self, m: f64) -> Self {
+        self.multiplier = m.max(1.0);
+        self
+    }
+
     /// `per_minute` is the sustained refill rate; `burst` is the bucket size.
     pub fn allow(&self, cls: &str, client: &str, per_minute: f64, burst: f64) -> bool {
+        let (per_minute, burst) = (per_minute * self.multiplier, burst * self.multiplier);
         let key = format!("{cls}|{client}");
         let t = (self.now)();
         let mut map = self.buckets.lock();

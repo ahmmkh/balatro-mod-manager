@@ -174,3 +174,29 @@ fn old_reports_are_pruned() {
             .unwrap();
     assert_eq!(left, 2);
 }
+
+#[test]
+fn prune_shrinks_the_reports_file() {
+    let f = fx();
+    let blob = vec![7u8; 200_000];
+    {
+        let c = f.st.reports.lock().unwrap();
+        for i in 0..40 {
+            c.execute(
+                "INSERT INTO reports (created_at,title,description,mm_version,os,arch,cpu,gpu,ram,log_filename,log_gz,log_bytes) VALUES (?1,'t','d','','','','','','','',?2,0)",
+                rusqlite::params![T0 - 40 * 86_400 - i, blob],
+            )
+            .unwrap();
+        }
+        c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+            .unwrap();
+    }
+    let size = || {
+        std::fs::metadata(f._dir.path().join("reports.sqlite"))
+            .unwrap()
+            .len()
+    };
+    let before = size();
+    assert_eq!(prune_reports(&f.st.reports, T0).unwrap(), 40);
+    assert!(size() < before / 2, "before {before}, after {}", size());
+}
