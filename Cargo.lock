@@ -570,24 +570,29 @@ name = "bmi-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "bmi-core",
  "flate2",
+ "futures-util",
  "http-body-util",
  "parking_lot",
  "rand 0.9.5",
  "reqwest",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",
+ "subtle",
  "tempfile",
  "tokio",
  "tokio-util",
  "tower",
  "tower-http",
  "tracing",
+ "url",
 ]
 
 [[package]]

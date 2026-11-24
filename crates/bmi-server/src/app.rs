@@ -2,6 +2,7 @@
 use crate::config::Config;
 use crate::db::{self, Db};
 use crate::downloads::{DownloadCounter, Today};
+use crate::links::{Fetch, ReqwestFetch};
 use crate::ratelimit::RateLimiter;
 use crate::store::Store;
 use crate::sync::IndexSync;
@@ -14,8 +15,9 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use parking_lot::{Mutex, RwLock};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex as StdMutex};
 use tower_http::compression::CompressionLayer;
 
@@ -48,6 +50,11 @@ pub struct AppState {
     pub counters: Arc<Counters>,
     pub http: reqwest::Client,
     pub now: NowFn,
+    /// Network access for link probes (stubbed in tests).
+    pub fetch: Arc<dyn Fetch>,
+    pub link_check_running: Arc<AtomicBool>,
+    /// Salted hashes of banned client IPs.
+    pub banned: Arc<RwLock<HashSet<String>>>,
 }
 
 impl AppState {
@@ -63,6 +70,12 @@ impl AppState {
         let n = now.clone();
         let today: Today = Arc::new(move || utc_day_of(n()));
         let downloads = Arc::new(DownloadCounter::new(db.clone(), secret, today)?);
+        let banned: HashSet<String> = {
+            let c = db.lock().unwrap_or_else(|e| e.into_inner());
+            let mut st = c.prepare("SELECT hash FROM banned")?;
+            st.query_map([], |r| r.get::<_, String>(0))?
+                .collect::<Result<_, _>>()?
+        };
         Ok(AppState {
             store: Arc::new(RwLock::new(Store::new(db.clone()))),
             cfg: Arc::new(cfg),
@@ -76,6 +89,9 @@ impl AppState {
                 .timeout(std::time::Duration::from_secs(10))
                 .build()?,
             now,
+            fetch: Arc::new(ReqwestFetch::new()?),
+            link_check_running: Arc::new(AtomicBool::new(false)),
+            banned: Arc::new(RwLock::new(banned)),
         })
     }
 }
@@ -153,6 +169,12 @@ async fn edge(State(st): State<AppState>, mut req: Request, next: Next) -> Respo
         .get::<ConnectInfo<SocketAddr>>()
         .map(|c| c.0);
     let ip = client_ip(&st.cfg, req.headers(), peer);
+    if req.uri().path() != "/healthz"
+        && st.banned.read().contains(&st.downloads.hash(&["ban", &ip]))
+    {
+        st.counters.inc("blocked");
+        return json_error(StatusCode::FORBIDDEN, "forbidden");
+    }
     req.extensions_mut().insert(ClientIp(ip));
     let mut res = next.run(req).await;
     st.counters
@@ -170,6 +192,7 @@ async fn edge(State(st): State<AppState>, mut req: Request, next: Next) -> Respo
 pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(crate::routes_public::routes())
+        .merge(crate::routes_admin::routes(state.clone()))
         .fallback(|| async { json_error(StatusCode::NOT_FOUND, "not found") })
         .layer(middleware::from_fn_with_state(state.clone(), edge))
         .layer(CompressionLayer::new())

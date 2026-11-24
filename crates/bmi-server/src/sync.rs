@@ -12,6 +12,9 @@ pub struct IndexSync {
 }
 
 impl IndexSync {
+    /// Placeholder until the git sync is implemented.
+    pub async fn sync_once(&self, _force: bool) {}
+
     pub fn status(&self) -> SyncStatus {
         self.status.lock().clone()
     }

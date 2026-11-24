@@ -94,6 +94,11 @@ pub fn fx() -> Fx {
 }
 
 impl Fx {
+    /// Rebuild the router after mutating `self.st` (e.g. swapping the link fetcher).
+    pub fn rebuild(&mut self) {
+        self.app = router(self.st.clone());
+    }
+
     pub fn load(&self, mods: &[serde_json::Value], thumbs: &[&str]) -> tempfile::TempDir {
         let d = write_catalog(mods, thumbs);
         self.st.store.write().load(d.path(), T0).unwrap();
@@ -143,6 +148,10 @@ pub async fn send(
         headers: parts.headers,
         body: body.collect().await.unwrap().to_bytes().to_vec(),
     }
+}
+
+pub fn bearer() -> [(&'static str, String); 1] {
+    [("authorization", format!("Bearer {ADMIN}"))]
 }
 
 pub async fn get(app: &Router, path: &str) -> Res {
