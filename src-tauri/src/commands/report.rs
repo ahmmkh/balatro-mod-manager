@@ -464,7 +464,10 @@ mod tests {
 
     #[test]
     fn test_report_url_is_https() {
-        let url = crate::bmi::bmi_server_url().unwrap().join("report").unwrap();
+        let url = crate::bmi::bmi_server_url()
+            .unwrap()
+            .join("report")
+            .unwrap();
         assert_eq!(url.path(), "/report");
         // BMI_SERVER_URL may legitimately be http://localhost during development.
         if std::env::var("BMI_SERVER_URL").is_err() {
@@ -478,7 +481,12 @@ mod tests {
         assert_eq!(tail_str("hello world", 5), "world");
         // "é" is 2 bytes; a cut in the middle must advance to the next boundary.
         assert_eq!(tail_str("aéb", 2), "b");
-        assert!(STANDARD.encode(tail_str(&"x".repeat(2_000_000), MAX_LOG_BYTES)).len() < 1_000_000);
+        assert!(
+            STANDARD
+                .encode(tail_str(&"x".repeat(2_000_000), MAX_LOG_BYTES))
+                .len()
+                < 1_000_000
+        );
     }
 
     #[test]

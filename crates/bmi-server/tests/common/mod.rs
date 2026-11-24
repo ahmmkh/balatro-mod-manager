@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use tower::ServiceExt;
 
 pub const ADMIN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-/// 2026-11-15 12:00:00 UTC
+/// 2026-11-13 12:00:00 UTC
 pub const T0: i64 = 1_794_571_200;
 
 pub struct Fx {

@@ -23,6 +23,20 @@ async fn main() -> anyhow::Result<()> {
     }
     let env: HashMap<String, String> = std::env::vars().collect();
     let cfg = Config::from_env(&env)?;
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("backup") {
+        let keep = args
+            .iter()
+            .position(|a| a == "--keep")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(7);
+        let conn = bmi_server::db::open(&cfg.data_dir.join("bmi.sqlite"))?;
+        let out =
+            bmi_server::maintenance::backup(&conn, &cfg.data_dir.join("backups"), keep, now_sec())?;
+        println!("{}", out.display());
+        return Ok(());
+    }
     let now: NowFn = Arc::new(now_sec);
     let mut st = AppState::build(cfg.clone(), now)?;
     let sync = cfg

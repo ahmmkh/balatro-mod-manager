@@ -146,6 +146,11 @@ pub struct SyncCache {
     pub items: Vec<crate::commands::repo::ArchiveModItem>,
 }
 
+/// Parse the `GET /downloads` payload: `{ "<id>": {"total","today","week"}, … }`.
+pub(crate) fn parse_downloads_map(bytes: &[u8]) -> Result<HashMap<String, ModDownloads>, String> {
+    serde_json::from_slice(bytes).map_err(|e| format!("bad /downloads payload: {e}"))
+}
+
 impl BmiClient {
     pub fn new() -> Result<Self, String> {
         let base_url = bmi_server_url()?;
@@ -236,33 +241,18 @@ impl BmiClient {
         Ok((all, latest_updated))
     }
 
+    /// All download counts in one small request (`GET /downloads`). `_sort` is kept so existing
+    /// call sites compile; the counts are not ordered.
     pub async fn fetch_downloads_map(
         &self,
-        sort: SortMode,
+        _sort: SortMode,
     ) -> Result<HashMap<String, ModDownloads>, String> {
-        let mut cursor: Option<String> = None;
-        let mut out: HashMap<String, ModDownloads> = HashMap::new();
-        loop {
-            let page = self.fetch_mods_page(cursor.as_deref(), sort).await?;
-            for item in page.items {
-                let id = match item.id.clone().or(item.dir_name.clone()) {
-                    Some(val) => val,
-                    None => continue,
-                };
-                if let Some(downloads) = item
-                    .downloads
-                    .clone()
-                    .or_else(|| item.meta.as_ref().and_then(|m| m.downloads.clone()))
-                {
-                    out.insert(id, downloads);
-                }
-            }
-            match page.next_cursor {
-                Some(next) => cursor = Some(next),
-                None => break,
-            }
-        }
-        Ok(out)
+        let url = self
+            .effective_base_url()
+            .join("downloads")
+            .map_err(|e| e.to_string())?;
+        let bytes = self.get_bytes(url).await?;
+        parse_downloads_map(&bytes)
     }
 
     pub async fn refresh_downloads(
@@ -997,8 +987,8 @@ mod tests {
     }
 
     /// Live check against a running backend, e.g.:
-    ///   (cd ../balatro-mod-index/worker && bunx wrangler dev --port 8787)
-    ///   BMI_SERVER_URL=http://localhost:8787 cargo test -p balatro-mod-manager live_backend -- --ignored
+    ///   DATA_DIR=/tmp/bmi CATALOG_DIR=<built catalog> PORT=8789 target/release/bmi-server
+    ///   BMI_SERVER_URL=http://127.0.0.1:8789 cargo test -p balatro-mod-manager live_backend -- --ignored
     #[tokio::test]
     #[ignore = "requires a running BMI backend (set BMI_SERVER_URL)"]
     async fn live_backend_roundtrip() {
@@ -1009,16 +999,29 @@ mod tests {
             .fetch_all_mods(SortMode::NameAsc)
             .await
             .expect("fetch_all_mods");
-        assert!(all.len() > 100, "expected a populated catalog, got {}", all.len());
-        assert!(latest.is_some(), "catalog should report an updated_at cursor");
+        assert!(
+            all.len() > 100,
+            "expected a populated catalog, got {}",
+            all.len()
+        );
+        assert!(
+            latest.is_some(),
+            "catalog should report an updated_at cursor"
+        );
         assert!(
             all.iter().all(|m| m.meta.downloads.is_some()),
             "every mod needs `downloads` or the app discards its cache"
         );
-        assert!(
-            all.iter().all(|m| m.meta.download_url.as_deref().is_some_and(|u| u.starts_with("bmi://")))
-        );
-        let with_thumb = all.iter().find(|m| m.has_thumbnail).expect("some thumbnail");
+        assert!(all.iter().all(|m| {
+            m.meta
+                .download_url
+                .as_deref()
+                .is_some_and(|u| u.starts_with("bmi://"))
+        }));
+        let with_thumb = all
+            .iter()
+            .find(|m| m.has_thumbnail)
+            .expect("some thumbnail");
         let bytes = client
             .get_bytes(Url::parse(&with_thumb.image_url).expect("thumb url"))
             .await
@@ -1029,12 +1032,87 @@ mod tests {
         let url = client.post_download(id).await.expect("post_download");
         assert!(url.starts_with("http"), "resolved download url: {url}");
 
+        // The lean map lists mods that have been downloaded at least once.
+        let counts = client
+            .fetch_downloads_map(SortMode::NameAsc)
+            .await
+            .expect("downloads map");
+        assert!(
+            counts.get(id).is_some_and(|d| d.total >= 1),
+            "counts: {counts:?}"
+        );
+
         let (changed, _) = client
             .fetch_changed_mods("0", SortMode::UpdatedDesc)
             .await
             .expect("changed");
         // Mods without a `last-updated` stamp never show up as "changed"; the first sync is a full fetch.
         assert!(!changed.is_empty() && changed.len() <= all.len());
+    }
+
+    #[test]
+    fn downloads_map_parses_lean_payload() {
+        let map = parse_downloads_map(br#"{"a@Alpha":{"total":5,"today":1,"week":2},"b@Beta":{"total":0,"today":0,"week":0}}"#)
+            .expect("parse");
+        assert_eq!(map["a@Alpha"].total, 5);
+        assert_eq!(map["a@Alpha"].today, 1);
+        assert_eq!(map.len(), 2);
+        assert!(parse_downloads_map(b"not json").is_err());
+    }
+
+    /// One-shot local stub: records every request line so we can assert how many requests a
+    /// downloads refresh makes and to which path.
+    async fn stub_server(
+        body: &'static str,
+    ) -> (Url, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let seen = seen2.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    let line = String::from_utf8_lossy(&buf[..n])
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
+                    seen.lock().unwrap().push(line);
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        (Url::parse(&format!("http://{addr}/")).unwrap(), seen)
+    }
+
+    #[tokio::test]
+    async fn refresh_downloads_makes_exactly_one_downloads_request() {
+        let (base, seen) = stub_server(r#"{"a@Alpha":{"total":7,"today":2,"week":3}}"#).await;
+        let client = BmiClient {
+            base_url: base,
+            client: reqwest::Client::new(),
+        };
+        let mut items = vec![crate::commands::repo::test_item("a@Alpha")];
+        client
+            .refresh_downloads(&mut items, SortMode::NameAsc)
+            .await
+            .expect("refresh");
+        assert_eq!(items[0].meta.downloads.as_ref().map(|d| d.total), Some(7));
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].starts_with("GET /downloads "), "{seen:?}");
     }
 
     #[test]
