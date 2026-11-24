@@ -91,8 +91,11 @@ impl Sandbox {
             _guard: guard,
         }
     }
+    /// Where the app itself decides mods go. On Linux that is a Proton prefix under $HOME when no
+    /// native Steam is found, elsewhere `<BMM_CONFIG_DIR>/Balatro/Mods`; asking the app keeps the
+    /// test about install behaviour, not about that per-OS choice.
     fn mods(&self) -> PathBuf {
-        self.root.join("Balatro").join("Mods")
+        bmm_lib::mods_dir()
     }
 }
 

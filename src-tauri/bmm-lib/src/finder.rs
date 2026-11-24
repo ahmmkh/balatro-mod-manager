@@ -94,7 +94,7 @@ fn read_path_from_registry() -> Result<String, std::io::Error> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let steam_path = hklm.open_subkey("SOFTWARE\\WOW6432Node\\Valve\\Steam")?;
 
-    Ok(steam_path.get_value("InstallPath")?)
+    steam_path.get_value("InstallPath")
 }
 
 /// Steam's install path from the Windows registry; `None` elsewhere or when unreadable.
@@ -453,11 +453,10 @@ pub fn is_steam_running() -> bool {
     #[cfg(target_os = "windows")]
     {
         let system = System::new_all();
-        let x = system
+        system
             .processes_by_exact_name(std::ffi::OsStr::new("steam.exe"))
             .next()
-            .is_some();
-        x
+            .is_some()
     }
 
     #[cfg(target_family = "unix")]
@@ -654,6 +653,9 @@ mod tests {
         // Redirect config dir to temp using XDG_CONFIG_HOME and HOME (for macOS)
         let original_cfg = std::env::var_os("XDG_CONFIG_HOME");
         let original_home = std::env::var_os("HOME");
+        let original_override = std::env::var_os("BMM_CONFIG_DIR");
+        // `dirs` ignores HOME/XDG_CONFIG_HOME on Windows, so use the explicit override as well.
+        set_var("BMM_CONFIG_DIR", tmp.path());
         set_var("XDG_CONFIG_HOME", tmp.path());
         // Ensure HOME points at temp so path resolution doesn't touch real user dirs.
         set_var("HOME", tmp.path());
@@ -681,6 +683,10 @@ mod tests {
         assert!(mods.iter().any(|p| p.ends_with("Another")));
 
         // restore environment
+        match original_override {
+            Some(val) => set_var("BMM_CONFIG_DIR", val),
+            None => remove_var("BMM_CONFIG_DIR"),
+        }
         match original_cfg {
             Some(val) => set_var("XDG_CONFIG_HOME", val),
             None => remove_var("XDG_CONFIG_HOME"),

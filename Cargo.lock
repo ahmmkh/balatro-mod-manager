@@ -609,7 +609,6 @@ dependencies = [
  "discord-rich-presence",
  "env_logger",
  "flate2",
- "home",
  "infer",
  "lazy_static",
  "libc",
