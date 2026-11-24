@@ -14,3 +14,12 @@ path = "src/main.rs"
 
 [dependencies]
 bmi-core = { path = "../bmi-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rand = "0.9"
+thiserror = "2"
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3.27.0"

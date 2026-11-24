@@ -490,7 +490,14 @@ dependencies = [
 name = "bmi-server"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bmi-core",
+ "rand 0.9.5",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
