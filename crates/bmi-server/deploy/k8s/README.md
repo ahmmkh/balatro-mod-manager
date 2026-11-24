@@ -39,3 +39,13 @@ Download counts since the snapshot are lost; reports are not backed up (30-day r
 
 `kubectl -n bmi rollout undo deploy/bmi-server`, or re-import the previous image tag and set it in the manifest.
 The app keeps working from its cached catalog while the backend is down.
+
+## Log: volume creation (2026-11-24)
+
+Ran the "Fixed-size data volume" commands on kh-kube. `findmnt --verify` printed only warnings
+(source is a regular file, fstab newer than systemd's copy), no errors; `mount -a` was a no-op;
+`df -h /srv/bmi` showed 7.8G. Filling it as root (`dd ... count=9000`) stopped with
+`No space left on device` at 7.8G and the volume was empty again after `rm`. A second fill moved
+the root filesystem's free space by only ~5 MB, so the volume is a hard cap. Note: the first fill
+cost the root disk the full ~8 GiB (the image is not reserved up front on this filesystem), so
+the host's total cost is 8 GiB, once.
