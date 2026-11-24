@@ -220,8 +220,9 @@ async fn metrics_include_sizes_and_volume() {
     };
     assert!(val("bmi_db_bytes{db=\"main\"}") > 0);
     assert!(val("bmi_db_bytes{db=\"reports\"}") > 0);
-    assert!(val("bmi_volume_total_bytes") > 0);
     assert!(val("bmi_volume_free_bytes") <= val("bmi_volume_total_bytes"));
+    #[cfg(unix)]
+    assert!(val("bmi_volume_total_bytes") > 0);
     assert_eq!(val("bmi_mods"), 3);
 }
 

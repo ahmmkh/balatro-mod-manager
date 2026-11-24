@@ -240,15 +240,26 @@ fn db_bytes(path: &std::path::Path) -> u64 {
     size(path) + size(std::path::Path::new(&wal))
 }
 
+/// (free, total) bytes of the filesystem holding `dir`; (0, 0) where unsupported (the server is
+/// deployed on Linux; other OSes only need to compile and run the tests).
+#[cfg(unix)]
+fn volume_bytes(dir: &std::path::Path) -> (u64, u64) {
+    rustix::fs::statvfs(dir)
+        .map(|v| (v.f_bavail * v.f_frsize, v.f_blocks * v.f_frsize))
+        .unwrap_or((0, 0))
+}
+#[cfg(not(unix))]
+fn volume_bytes(_dir: &std::path::Path) -> (u64, u64) {
+    (0, 0)
+}
+
 async fn metrics(State(st): State<AppState>) -> Response {
     let snap = st.downloads.snapshot();
     let (mods, loaded) = {
         let s = st.store.read();
         (s.mods().len(), s.loaded_at())
     };
-    let (free, total) = rustix::fs::statvfs(&st.cfg.data_dir)
-        .map(|v| (v.f_bavail * v.f_frsize, v.f_blocks * v.f_frsize))
-        .unwrap_or((0, 0));
+    let (free, total) = volume_bytes(&st.cfg.data_dir);
     let sync_ok = st
         .sync
         .as_ref()
