@@ -279,6 +279,8 @@ fn get_cpu_and_ram() -> (String, String) {
 /// - Windows: "Microsoft Windows 11 Pro 10.0.22631 (Build 3880)"
 /// - macOS:   "macOS 14.5 (23F79)"
 /// - Linux:   distro + kernel if available
+// The Windows branches nest `if let` + `if`; clippy only sees them on a Windows host.
+#[allow(clippy::collapsible_if)]
 fn detect_os_version() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
@@ -488,6 +490,8 @@ fn detect_gpu() -> Option<String> {
 }
 
 // Platform-specific CPU detection (best effort)
+// The Windows branches nest `if let` + `if`; clippy only sees them on a Windows host.
+#[allow(clippy::collapsible_if)]
 fn detect_cpu() -> String {
     #[cfg(target_os = "macos")]
     {
