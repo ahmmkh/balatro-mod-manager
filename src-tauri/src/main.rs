@@ -19,6 +19,19 @@ fn scrub_dyld_injection_env() {
 }
 
 fn main() {
+    // Packaged-app smoke test: no window, no Tauri runtime. See `smoke_test`.
+    if std::env::args().any(|a| a == "--smoke-test") {
+        match balatro_mod_manager_lib::smoke_test() {
+            Ok(line) => {
+                println!("{line}");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("BMM_SMOKE_FAIL {e}");
+                std::process::exit(1);
+            }
+        }
+    }
     #[cfg(target_os = "macos")]
     scrub_dyld_injection_env();
     #[cfg(target_os = "linux")]
